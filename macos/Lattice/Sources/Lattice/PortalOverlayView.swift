@@ -14,12 +14,7 @@ struct CapturedPortalBox {
   let quotedText: String?
 }
 
-enum PortalEndpoint: Equatable {
-  case source
-  case destination
-}
-
-struct PortalHoverTarget {
+struct PortalInteractionTarget {
   let portal: Portal
   let endpoint: PortalEndpoint
   let rect: NSRect
@@ -40,14 +35,15 @@ final class PortalOverlayView: NSView {
   }
   var arrivalAnchorID: UUID? { didSet { needsDisplay = true } }
   var onBoxCaptured: ((CapturedPortalBox) -> Void)?
-  var onActivatePortal: ((Portal) -> Void)?
+  var onActivatePortal: ((PortalInteractionTarget) -> Void)?
   var onDeletePortal: ((UUID) -> Void)?
-  var onHoverPortal: ((PortalHoverTarget?) -> Void)?
+  var onHoverPortal: ((PortalInteractionTarget?) -> Void)?
 
   private var dragStart: NSPoint?
   private var dragCurrent: NSPoint?
   private var dragPage: PDFPage?
   private var pressedPortalID: UUID?
+  private var pressedEndpoint: PortalEndpoint?
   private var pressedPortalPoint: NSPoint?
   private var hoveredPortalID: UUID?
   private var hoveredEndpoint: PortalEndpoint?
@@ -79,7 +75,9 @@ final class PortalOverlayView: NSView {
     if captureMode == .inactive {
       for (_, rect) in visibleSourceRects() { addCursorRect(rect, cursor: .pointingHand) }
       for portal in portals {
-        if let rect = destinationMarkerRect(for: portal) { addCursorRect(rect, cursor: .arrow) }
+        if let rect = destinationMarkerRect(for: portal) {
+          addCursorRect(rect, cursor: .pointingHand)
+        }
       }
     } else {
       addCursorRect(bounds, cursor: .crosshair)
@@ -89,7 +87,7 @@ final class PortalOverlayView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard !isHidden, alphaValue > 0.01 else { return nil }
     if captureMode != .inactive { return self }
-    return hoverTarget(at: point) == nil ? nil : self
+    return interactionTarget(at: point) == nil ? nil : self
   }
 
   override func mouseDown(with event: NSEvent) {
@@ -107,7 +105,9 @@ final class PortalOverlayView: NSView {
       needsDisplay = true
       return
     }
-    pressedPortalID = sourcePortal(at: point)?.id
+    let target = interactionTarget(at: point)
+    pressedPortalID = target?.portal.id
+    pressedEndpoint = target?.endpoint
     pressedPortalPoint = point
   }
 
@@ -123,14 +123,17 @@ final class PortalOverlayView: NSView {
     if captureMode == .inactive {
       defer {
         pressedPortalID = nil
+        pressedEndpoint = nil
         pressedPortalPoint = nil
       }
       if let id = pressedPortalID,
+        let endpoint = pressedEndpoint,
         let start = pressedPortalPoint,
         hypot(point.x - start.x, point.y - start.y) <= 6,
-        let portal = portals.first(where: { $0.id == id })
+        let portal = portals.first(where: { $0.id == id }),
+        let rect = interactionRect(for: portal, endpoint: endpoint)
       {
-        onActivatePortal?(portal)
+        onActivatePortal?(PortalInteractionTarget(portal: portal, endpoint: endpoint, rect: rect))
       }
       return
     }
@@ -154,7 +157,7 @@ final class PortalOverlayView: NSView {
   override func mouseMoved(with event: NSEvent) {
     guard captureMode == .inactive else { return }
     let point = convert(event.locationInWindow, from: nil)
-    let target = hoverTarget(at: point)
+    let target = interactionTarget(at: point)
     guard target?.portal.id != hoveredPortalID || target?.endpoint != hoveredEndpoint else {
       return
     }
@@ -219,11 +222,12 @@ final class PortalOverlayView: NSView {
 
   private func drawSource(_ anchor: PortalAnchor, hovered: Bool) {
     guard let rect = overlayRect(for: anchor) else { return }
+    let isArrival = anchor.id == arrivalAnchorID
     let color = NSColor.controlAccentColor
-    color.withAlphaComponent(hovered ? 0.2 : 0.08).setFill()
+    color.withAlphaComponent(isArrival ? 0.28 : (hovered ? 0.2 : 0.08)).setFill()
     color.withAlphaComponent(0.9).setStroke()
     let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
-    path.lineWidth = 2
+    path.lineWidth = isArrival ? 3 : 2
     path.fill()
     path.stroke()
   }
@@ -297,16 +301,20 @@ final class PortalOverlayView: NSView {
     )
   }
 
-  private func hoverTarget(at point: NSPoint) -> PortalHoverTarget? {
+  private func interactionTarget(at point: NSPoint) -> PortalInteractionTarget? {
     if let portal = sourcePortal(at: point), let rect = sourceRect(for: portal) {
-      return PortalHoverTarget(portal: portal, endpoint: .source, rect: rect)
+      return PortalInteractionTarget(portal: portal, endpoint: .source, rect: rect)
     }
     for portal in portals.reversed() {
       if let rect = destinationMarkerRect(for: portal), rect.contains(point) {
-        return PortalHoverTarget(portal: portal, endpoint: .destination, rect: rect)
+        return PortalInteractionTarget(portal: portal, endpoint: .destination, rect: rect)
       }
     }
     return nil
+  }
+
+  private func interactionRect(for portal: Portal, endpoint: PortalEndpoint) -> NSRect? {
+    endpoint == .source ? sourceRect(for: portal) : destinationMarkerRect(for: portal)
   }
 
   private func overlayRect(for anchor: PortalAnchor) -> NSRect? {

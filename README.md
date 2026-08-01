@@ -18,6 +18,8 @@ The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local devi
 - Persistent rectangle portals stored outside the PDF in Application Support
 - Hover previews, exact portal teleports, cross-document path recovery, and source context-menu deletion
 - Session-only Vim jump history with backward and forward traversal
+- Exact per-document reading position and zoom restored across launches
+- Native fuzzy Ex-command palette and a Vim-style `:marks` portal index
 - Stable portal anchors containing a SHA-256 document fingerprint, page index, optional extracted text,
   and normalized page-space bounds
 
@@ -58,15 +60,20 @@ distribution are deferred.
 | `p`                | Start rectangle portal capture |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
 | `Escape`           | Cancel portal capture          |
+| `:`                | Fuzzy-find reader commands     |
+| `:marks`           | List marks in the current PDF  |
 | `?`                | Show shortcut help             |
 
 To create a portal, press `p` and drag a source rectangle. Navigate anywhere—or open another
 PDF—and drag the destination rectangle. Hover the source for a sharp destination preview, click it
 to teleport, or right-click it to delete the portal. At the destination, a compact right-edge
-bookmark badge shows the source page number, previews the source when hovered, and flashes when you
-arrive. Portals persist in
+bookmark badge shows the source page number, previews the source when hovered, and returns to the
+source when clicked. Run `:marks` to list every portal source in the current PDF; use `Ctrl+N` and
+`Ctrl+P` to move through command and mark lists.
+Portals persist in
 `~/Library/Application Support/Lattice/portals-v1.json`; the PDFs are never modified. The jump list
-is intentionally reset when Lattice quits.
+is intentionally reset when Lattice quits. Reading positions persist separately in
+`~/Library/Application Support/Lattice/reading-state-v1.json`.
 
 ## Development
 
@@ -87,15 +94,12 @@ directory.
 - `macos/Lattice/Sources/Lattice/LatticePDFView.swift` adds drag-and-drop and Vim event routing without
   intercepting trackpad scrolling or magnification.
 - `macos/Lattice/Sources/LatticeCore/` contains renderer-independent Vim, portal persistence, and
-  jump-list models.
+  jump-list, command-search, and reading-state models.
 - `macos/Lattice/Sources/Lattice/PortalOverlayView.swift` converts normalized portal geometry back
   into PDFKit coordinates and handles box capture and selective source-box interaction.
 - `macos/Lattice/Sources/Lattice/PortalPreviewRenderer.swift` renders destination crops on a serial
   background queue and caches them by document, geometry, scale, and appearance.
 - `macos/Lattice/Resources/Info.plist` contains the macOS bundle and PDF association metadata.
-
-The previous PDF.js/Tauri application under `src/` and `src-tauri/` is a frozen reference
-implementation. It is no longer the product path and will not receive renderer or zoom tuning.
 
 ## Roadmap
 

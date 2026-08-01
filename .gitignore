@@ -1,16 +1,12 @@
-# JavaScript
-node_modules/
-dist/
-coverage/
-*.log
-
-# Rust / Tauri
-src-tauri/target/
+# Native macOS builds
 /native/
+node_modules/
 macos/**/.build/
 macos/**/.cache/
 macos/**/build/
-src-tauri/gen/
+
+# Logs
+*.log
 
 # Editors and operating systems
 .DS_Store

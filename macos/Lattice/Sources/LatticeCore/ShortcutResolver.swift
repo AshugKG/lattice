@@ -21,6 +21,9 @@ public enum ReaderCommand: Equatable, Sendable {
   case cancelPortal
   case jumpBackward
   case jumpForward
+  case showCommandPalette
+  case showMarks
+  case quit
 }
 
 public struct ShortcutModifiers: OptionSet, Sendable {
@@ -79,6 +82,7 @@ public struct ShortcutResolver: Sendable {
       "-": .zoomOut,
       "0": .fitWidth,
       "p": .capturePortal,
+      ":": .showCommandPalette,
     ][key]
   }
 }

@@ -17,7 +17,7 @@ APP_DIR="$PACKAGE_DIR/build/Lattice.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_DIR/Lattice" "$APP_DIR/Contents/MacOS/Lattice"
 cp "$PACKAGE_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
-cp "$PACKAGE_DIR/../../src-tauri/icons/icon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp "$PACKAGE_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP_DIR"
 
 echo "$APP_DIR"

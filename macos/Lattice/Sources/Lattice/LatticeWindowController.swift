@@ -3,11 +3,14 @@ import LatticeCore
 import PDFKit
 
 @MainActor
-final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
+final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, NSWindowDelegate {
   private let pdfView = LatticePDFView()
   private let portalOverlay = PortalOverlayView()
   private let previewCard = PortalPreviewCard(frame: .zero)
+  private let commandPalette = CommandPaletteView(frame: .zero)
+  private let marksView = PortalMarksView(frame: .zero)
   private let portalRepository = PortalRepository()
+  private let readingStateRepository = ReadingStateRepository()
   private let previewRenderer = PortalPreviewRenderer()
   private let filenameLabel = NSTextField(labelWithString: "No document open")
   private let pageLabel = NSTextField(labelWithString: "— / —")
@@ -19,11 +22,13 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
   private var descriptor: DocumentDescriptor?
   private var portalDraft: PortalAnchor?
   private var portals: [Portal] = []
+  private var readingPositions: [String: ReadingPosition] = [:]
   private var jumpList = JumpList()
   private var observers: [NSObjectProtocol] = []
   private var scrollBoundsObserver: NSObjectProtocol?
   private var fingerprintGeneration = UUID()
   private var hoverWorkItem: DispatchWorkItem?
+  private var readingSaveWorkItem: DispatchWorkItem?
   private var hoveredPortalID: UUID?
   private var hoveredEndpoint: PortalEndpoint?
   private var searchOriginRecorded = false
@@ -41,9 +46,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     window.acceptsMouseMovedEvents = true
     window.center()
     super.init(window: window)
+    window.delegate = self
     configureUI()
     observePDFView()
     loadPortals()
+    loadReadingState()
   }
 
   required init?(coder: NSCoder) { nil }
@@ -62,6 +69,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
   func openDocument(
     at url: URL,
     recordJump: Bool = true,
+    resumeReadingPosition: Bool = true,
     completion: (@MainActor (DocumentDescriptor) -> Void)? = nil
   ) {
     guard url.pathExtension.lowercased() == "pdf" else {
@@ -76,6 +84,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     }
     if document.isLocked, !unlock(document: document, named: url.lastPathComponent) { return }
 
+    if !commandPalette.isHidden { commandPalette.dismiss() }
+    if !marksView.isHidden { marksView.dismiss() }
+    persistCurrentReadingPosition()
     if recordJump { recordCurrentBeforeJump() }
     if portalOverlay.captureMode == .inactive { portalDraft = nil }
     descriptor = nil
@@ -108,6 +119,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
       self.descriptor = descriptor
       self.portalOverlay.documentFingerprint = descriptor.fingerprint
       self.portalOverlay.portals = self.portals
+      if resumeReadingPosition, let saved = self.readingPositions[descriptor.fingerprint] {
+        self.pdfView.restore(saved.location.clamped(pageCount: descriptor.pageCount))
+      }
       completion?(descriptor)
     }
   }
@@ -167,15 +181,34 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     pdfView.onDropPDF = { [weak self] url in self?.openDocument(at: url) }
     pdfView.onViewportChanged = { [weak self] in
       self?.portalOverlay.viewportDidChange()
+      self?.scheduleReadingPositionSave()
     }
 
     portalOverlay.translatesAutoresizingMaskIntoConstraints = false
     portalOverlay.pdfView = pdfView
     portalOverlay.onBoxCaptured = { [weak self] box in self?.capture(box) }
-    portalOverlay.onActivatePortal = { [weak self] portal in self?.activate(portal) }
+    portalOverlay.onActivatePortal = { [weak self] target in self?.activate(target) }
     portalOverlay.onDeletePortal = { [weak self] id in self?.deletePortal(id) }
     portalOverlay.onHoverPortal = { [weak self] target in self?.hover(target) }
     pdfView.addSubview(portalOverlay)
+
+    commandPalette.translatesAutoresizingMaskIntoConstraints = false
+    commandPalette.onExecute = { [weak self] command in
+      guard let self else { return }
+      self.window?.makeFirstResponder(self.pdfView)
+      self.pdfView.execute(command.action)
+    }
+    commandPalette.onDismiss = { [weak self] in
+      guard let self else { return }
+      self.window?.makeFirstResponder(self.pdfView)
+    }
+
+    marksView.translatesAutoresizingMaskIntoConstraints = false
+    marksView.onActivate = { [weak self] mark in self?.activate(mark) }
+    marksView.onDismiss = { [weak self] in
+      guard let self else { return }
+      self.window?.makeFirstResponder(self.pdfView)
+    }
 
     emptyLabel.translatesAutoresizingMaskIntoConstraints = false
     emptyLabel.font = .systemFont(ofSize: 17, weight: .medium)
@@ -213,6 +246,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     rootView.addSubview(pdfView)
     rootView.addSubview(emptyLabel)
     rootView.addSubview(previewCard)
+    rootView.addSubview(commandPalette)
+    rootView.addSubview(marksView)
 
     NSLayoutConstraint.activate([
       toolbar.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -233,6 +268,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
       portalOverlay.bottomAnchor.constraint(equalTo: pdfView.bottomAnchor),
       emptyLabel.centerXAnchor.constraint(equalTo: pdfView.centerXAnchor),
       emptyLabel.centerYAnchor.constraint(equalTo: pdfView.centerYAnchor),
+      commandPalette.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+      commandPalette.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -18),
+      commandPalette.widthAnchor.constraint(equalToConstant: 640),
+      commandPalette.heightAnchor.constraint(equalToConstant: 300),
+      marksView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+      marksView.centerYAnchor.constraint(equalTo: pdfView.centerYAnchor),
+      marksView.widthAnchor.constraint(equalToConstant: 680),
+      marksView.heightAnchor.constraint(equalToConstant: 420),
     ])
   }
 
@@ -240,11 +283,21 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     observers.append(
       NotificationCenter.default.addObserver(
         forName: .PDFViewPageChanged, object: pdfView, queue: .main
-      ) { [weak self] _ in MainActor.assumeIsolated { self?.updatePageAndScale() } })
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.updatePageAndScale()
+          self?.scheduleReadingPositionSave()
+        }
+      })
     observers.append(
       NotificationCenter.default.addObserver(
         forName: .PDFViewScaleChanged, object: pdfView, queue: .main
-      ) { [weak self] _ in MainActor.assumeIsolated { self?.updatePageAndScale() } })
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.updatePageAndScale()
+          self?.scheduleReadingPositionSave()
+        }
+      })
   }
 
   private func installScrollObservation() {
@@ -262,6 +315,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
       MainActor.assumeIsolated {
         guard let self else { return }
         self.portalOverlay.viewportDidChange()
+        self.scheduleReadingPositionSave()
       }
     }
   }
@@ -288,6 +342,45 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
         message: "It will remain available for this session only.")
     }
     portalOverlay.portals = portals
+  }
+
+  private func loadReadingState() {
+    do {
+      readingPositions = try readingStateRepository.load()
+    } catch {
+      readingPositions = [:]
+      showError(
+        title: "Reading state could not be loaded",
+        message: "The invalid data was moved aside. Reading positions will be saved again.")
+    }
+  }
+
+  private func scheduleReadingPositionSave() {
+    guard descriptor != nil else { return }
+    readingSaveWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.persistCurrentReadingPosition() }
+    readingSaveWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+  }
+
+  func persistCurrentReadingPosition() {
+    readingSaveWorkItem?.cancel()
+    readingSaveWorkItem = nil
+    guard let descriptor, let location = pdfView.currentJumpLocation(descriptor: descriptor) else {
+      return
+    }
+    readingPositions[descriptor.fingerprint] = ReadingPosition(location: location)
+    do {
+      try readingStateRepository.save(readingPositions)
+    } catch {
+      showError(
+        title: "Reading position could not be saved",
+        message: "Lattice will try again the next time the viewport changes.")
+    }
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    persistCurrentReadingPosition()
   }
 
   private func beginPortalCapture() {
@@ -348,7 +441,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     savePortals()
   }
 
-  private func hover(_ target: PortalHoverTarget?) {
+  private func hover(_ target: PortalInteractionTarget?) {
     hoverWorkItem?.cancel()
     guard let target else {
       hidePreview()
@@ -411,9 +504,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     previewCard.frame = NSRect(origin: NSPoint(x: x, y: y), size: size)
   }
 
-  private func activate(_ portal: Portal) {
+  private func activate(_ interaction: PortalInteractionTarget) {
     hidePreview()
-    let target = portal.destination
+    let target = interaction.portal.oppositeAnchor(from: interaction.endpoint)
     if descriptor?.fingerprint == target.documentFingerprint {
       recordCurrentBeforeJump()
       pdfView.go(to: target, scale: pdfView.scaleFactor)
@@ -423,7 +516,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
     resolveURL(for: target) { [weak self] url in
       guard let self else { return }
       self.recordCurrentBeforeJump()
-      self.openDocument(at: url, recordJump: false) { descriptor in
+      self.openDocument(
+        at: url,
+        recordJump: false,
+        resumeReadingPosition: false
+      ) { descriptor in
         guard descriptor.fingerprint == target.documentFingerprint else {
           self.locate(anchor: target)
           return
@@ -433,6 +530,28 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
         self.flashArrival(target)
       }
     }
+  }
+
+  private func activate(_ mark: PortalMark) {
+    marksView.dismiss()
+    guard descriptor?.fingerprint == mark.anchor.documentFingerprint else { return }
+    recordCurrentBeforeJump()
+    pdfView.go(to: mark.anchor, scale: pdfView.scaleFactor)
+    flashArrival(mark.anchor)
+  }
+
+  private func showCommandPalette() {
+    marksView.dismiss()
+    hidePreview()
+    commandPalette.present()
+  }
+
+  private func showMarks() {
+    commandPalette.dismiss()
+    hidePreview()
+    let entries =
+      descriptor.map { PortalMarks.entries(for: $0.fingerprint, portals: portals) } ?? []
+    marksView.present(entries: entries)
   }
 
   private func resolveURL(for anchor: PortalAnchor, completion: @escaping (URL) -> Void) {
@@ -495,6 +614,12 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
 
   private func handleNonLocalCommand(_ command: ReaderCommand) {
     switch command {
+    case .showCommandPalette:
+      showCommandPalette()
+    case .showMarks:
+      showMarks()
+    case .quit:
+      NSApp.terminate(nil)
     case .cancelPortal:
       cancelPortalCapture()
     case .jumpBackward:
@@ -542,7 +667,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
       )
     )
     resolveURL(for: anchor) { [weak self] url in
-      self?.openDocument(at: url, recordJump: false) { descriptor in
+      self?.openDocument(
+        at: url,
+        recordJump: false,
+        resumeReadingPosition: false
+      ) { descriptor in
         guard descriptor.fingerprint == location.documentFingerprint else { return }
         self?.pdfView.restore(location)
       }
@@ -600,6 +729,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate {
       + −     Zoom             0  Fit width
       ⌘F      Search           p  Create box portal
       ⌃O / ⌃I Back / forward jump     Esc  Cancel portal
+      :       Fuzzy commands   :marks  List portal marks
       """
     alert.addButton(withTitle: "Done")
     alert.runModal()

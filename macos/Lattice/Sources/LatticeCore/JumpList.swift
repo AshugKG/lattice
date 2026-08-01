@@ -1,6 +1,6 @@
 import Foundation
 
-public struct JumpLocation: Equatable, Sendable {
+public struct JumpLocation: Codable, Equatable, Sendable {
   public let documentFingerprint: String
   public let documentPath: String
   public let pageIndex: Int
@@ -26,6 +26,22 @@ public struct JumpLocation: Equatable, Sendable {
       && abs(viewportCenter.x - other.viewportCenter.x) < 0.002
       && abs(viewportCenter.y - other.viewportCenter.y) < 0.002
       && abs(scaleFactor - other.scaleFactor) < 0.01
+  }
+
+  public func clamped(pageCount: Int, minimumScale: Double = 0.25, maximumScale: Double = 4)
+    -> JumpLocation
+  {
+    JumpLocation(
+      documentFingerprint: documentFingerprint,
+      documentPath: documentPath,
+      pageIndex: min(max(0, pageIndex), max(0, pageCount - 1)),
+      viewportCenter: NormalizedPoint(
+        x: viewportCenter.x.isFinite ? min(1, max(0, viewportCenter.x)) : 0.5,
+        y: viewportCenter.y.isFinite ? min(1, max(0, viewportCenter.y)) : 0.5
+      ),
+      scaleFactor: scaleFactor.isFinite
+        ? min(maximumScale, max(minimumScale, scaleFactor)) : 1
+    )
   }
 }
 

@@ -41,6 +41,7 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
   #expect(
     resolver.resolve(key: "\t", keyCode: 34, modifiers: .control, timestamp: 3) == .jumpForward)
   #expect(resolver.resolve(key: "\u{1b}", keyCode: 53, timestamp: 3) == .cancelPortal)
+  #expect(resolver.resolve(key: ":", timestamp: 4) == .showCommandPalette)
 }
 
 @Test func portalFileRoundTripsThroughJSON() throws {
@@ -137,4 +138,72 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
   defer { try? FileManager.default.removeItem(at: url) }
   try Data("lattice".utf8).write(to: url)
   #expect(try DocumentFingerprint.sha256(of: url) == DocumentFingerprint.sha256(of: url))
+}
+
+@Test func portalEndpointResolutionIsBidirectional() {
+  let portal = Portal(source: anchor(page: 2), destination: anchor(page: 9))
+  #expect(portal.oppositeAnchor(from: .source).pageIndex == 9)
+  #expect(portal.oppositeAnchor(from: .destination).pageIndex == 2)
+  #expect(portal.anchor(at: .destination).pageIndex == 9)
+}
+
+@Test func portalMarksIncludeAndSortCurrentDocumentSourcesOnly() {
+  let sameDocument = Portal(source: anchor(page: 4, x: 0.5), destination: anchor(page: 1))
+  let outgoing = Portal(
+    source: anchor(page: 3), destination: anchor(fingerprint: "other", page: 8))
+  let unrelated = Portal(
+    source: anchor(fingerprint: "other", page: 0),
+    destination: anchor(fingerprint: "third", page: 0))
+  let entries = PortalMarks.entries(
+    for: "document", portals: [sameDocument, outgoing, unrelated])
+  #expect(entries.map(\.anchor.pageIndex) == [3, 4])
+  #expect(entries.map(\.endpoint) == [.source, .source])
+  #expect(entries.allSatisfy { $0.anchor.documentFingerprint == "document" })
+}
+
+@Test func commandCatalogSupportsExactAliasesAndFuzzyOrdering() {
+  #expect(CommandCatalog.exact(":marks")?.action == .showMarks)
+  #expect(CommandCatalog.exact("e")?.action == .open)
+  #expect(CommandCatalog.matches("marks").first?.name == "marks")
+  #expect(CommandCatalog.matches("mk").first?.name == "marks")
+  #expect(CommandCatalog.matches("no command named this").isEmpty)
+  #expect(CommandCatalog.matches("").count == CommandCatalog.commands.count)
+}
+
+@Test func jumpLocationClampsRestoredState() {
+  let invalid = JumpLocation(
+    documentFingerprint: "document",
+    documentPath: "/tmp/document.pdf",
+    pageIndex: 99,
+    viewportCenter: NormalizedPoint(x: -4, y: 8),
+    scaleFactor: 20
+  ).clamped(pageCount: 5)
+  #expect(invalid.pageIndex == 4)
+  #expect(invalid.viewportCenter == NormalizedPoint(x: 0, y: 1))
+  #expect(invalid.scaleFactor == 4)
+}
+
+@Test @MainActor func readingStateRepositoryRoundTripsAndReplacesLatestPosition() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let repository = ReadingStateRepository(
+    fileURL: directory.appendingPathComponent("reading-state.json"))
+  let first = ReadingPosition(location: location(page: 2))
+  try repository.save(["document": first])
+  #expect(try repository.load() == ["document": first])
+
+  let latest = ReadingPosition(location: location(page: 7))
+  try repository.save(["document": latest])
+  #expect(try repository.load()["document"] == latest)
+}
+
+@Test @MainActor func readingStateRepositoryMovesCorruptDataAside() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let url = directory.appendingPathComponent("reading-state.json")
+  try Data("not json".utf8).write(to: url)
+  let repository = ReadingStateRepository(fileURL: url)
+  #expect(throws: ReadingStateRepositoryError.corruptFile) { try repository.load() }
+  #expect(!FileManager.default.fileExists(atPath: url.path))
 }

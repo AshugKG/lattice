@@ -29,6 +29,11 @@ public struct NormalizedRect: Codable, Equatable, Hashable, Sendable {
   }
 }
 
+public enum PortalEndpoint: String, Codable, Equatable, Hashable, Sendable {
+  case source
+  case destination
+}
+
 public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public let documentFingerprint: String
@@ -93,6 +98,14 @@ public struct Portal: Codable, Equatable, Identifiable, Sendable {
         ? destination.replacingDocumentPath(path) : destination,
       createdAt: createdAt
     )
+  }
+
+  public func anchor(at endpoint: PortalEndpoint) -> PortalAnchor {
+    endpoint == .source ? source : destination
+  }
+
+  public func oppositeAnchor(from endpoint: PortalEndpoint) -> PortalAnchor {
+    endpoint == .source ? destination : source
   }
 }
 

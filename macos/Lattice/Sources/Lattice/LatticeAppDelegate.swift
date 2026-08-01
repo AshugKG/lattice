@@ -25,6 +25,10 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
     true
   }
 
+  func applicationWillTerminate(_ notification: Notification) {
+    windowController?.persistCurrentReadingPosition()
+  }
+
   func application(_ sender: NSApplication, openFiles filenames: [String]) {
     let urls =
       filenames

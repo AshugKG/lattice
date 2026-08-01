@@ -26,9 +26,9 @@ def draw_page(canvas: Canvas, page: int, total: int) -> None:
     text = canvas.beginText(54, height - 156)
     text.setLeading(18)
     for line in (
-        "This selectable text exercises PDF.js canvas and text-layer alignment.",
-        "Future portals will attach normalized geometry to blocks like this one.",
-        "Keyboard motion should remain smooth while nearby pages render lazily.",
+        "This selectable text exercises PDFKit rendering and selection alignment.",
+        "Portals attach normalized geometry to snippet boxes like this one.",
+        "Keyboard motion should remain smooth while native pages scroll.",
         "The document never leaves the local device.",
     ):
         text.textLine(line)

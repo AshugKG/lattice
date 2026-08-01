@@ -45,7 +45,7 @@ final class LatticePDFView: PDFView {
       super.keyDown(with: event)
       return
     }
-    perform(command)
+    execute(command)
   }
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -63,7 +63,7 @@ final class LatticePDFView: PDFView {
     onViewportChanged?()
   }
 
-  private func perform(_ command: ReaderCommand) {
+  func execute(_ command: ReaderCommand) {
     switch command {
     case .open: onOpen?()
     case .help: onHelp?()
@@ -74,7 +74,8 @@ final class LatticePDFView: PDFView {
     case .scrollRight: scrollBy(x: 88, y: 0)
     case .halfDown: scrollBy(x: 0, y: (scrollView?.contentView.bounds.height ?? 400) / 2)
     case .halfUp: scrollBy(x: 0, y: -(scrollView?.contentView.bounds.height ?? 400) / 2)
-    case .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward, .jumpForward:
+    case .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward, .jumpForward,
+      .showCommandPalette, .showMarks, .quit:
       onNonLocalCommand?(command)
     case .zoomIn:
       autoScales = false
