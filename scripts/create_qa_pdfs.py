@@ -27,7 +27,7 @@ def draw_page(canvas: Canvas, page: int, total: int) -> None:
     text.setLeading(18)
     for line in (
         "This selectable text exercises PDFKit rendering and selection alignment.",
-        "Portals attach normalized geometry to snippet boxes like this one.",
+        "Marks attach normalized geometry to snippet boxes like this one.",
         "Keyboard motion should remain smooth while native pages scroll.",
         "The document never leaves the local device.",
     ):

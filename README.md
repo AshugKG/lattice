@@ -3,7 +3,7 @@
 Lattice is a local-first macOS PDF reader for connected reading. Its document surface is Apple
 PDFKit's native `PDFView`, embedded in an AppKit application. PDFKit owns rendering, text selection,
 momentum scrolling, trackpad magnification, accessibility, and password handling; Lattice adds Vim
-navigation and portals between passages above that surface.
+navigation and marks between passages above that surface.
 
 The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local device.
 
@@ -15,12 +15,12 @@ The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local devi
 - Password prompt for encrypted documents
 - Native toolbar with page, zoom, Open, Fit, and shortcut controls
 - Vim navigation implemented independently of rendering
-- Persistent rectangle portals stored outside the PDF in Application Support
-- Hover previews, exact portal teleports, cross-document path recovery, and source context-menu deletion
+- Persistent rectangle marks stored outside the PDF in Application Support
+- Hover previews, exact mark teleports, cross-document path recovery, and source context-menu deletion
 - Session-only Vim jump history with backward and forward traversal
 - Exact per-document reading position and zoom restored across launches
-- Native fuzzy Ex-command palette and a Vim-style `:marks` portal index
-- Stable portal anchors containing a SHA-256 document fingerprint, page index, optional extracted text,
+- Native fuzzy Ex-command palette and a Vim-style `:marks` mark index
+- Stable mark anchors containing a SHA-256 document fingerprint, page index, optional extracted text,
   and normalized page-space bounds
 
 ### Run
@@ -57,21 +57,21 @@ distribution are deferred.
 | `+`, `-`           | Zoom in or out                 |
 | `0`                | Fit width                      |
 | `Cmd+F`            | Search the document            |
-| `p`                | Start rectangle portal capture |
+| `m`                | Start rectangle mark capture   |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
-| `Escape`           | Cancel portal capture          |
+| `Escape`           | Cancel mark capture            |
 | `:`                | Fuzzy-find reader commands     |
 | `:marks`           | List marks in the current PDF  |
 | `?`                | Show shortcut help             |
 
-To create a portal, press `p` and drag a source rectangle. Navigate anywhere—or open another
+To create a mark, press `m` and drag a source rectangle. Navigate anywhere—or open another
 PDF—and drag the destination rectangle. Hover the source for a sharp destination preview, click it
-to teleport, or right-click it to delete the portal. At the destination, a compact right-edge
+to teleport, or right-click it to delete the mark. At the destination, a compact right-edge
 bookmark badge shows the source page number, previews the source when hovered, and returns to the
-source when clicked. Run `:marks` to list every portal source in the current PDF; use `Ctrl+N` and
+source when clicked. Run `:marks` to list every mark source in the current PDF; use `Ctrl+N` and
 `Ctrl+P` to move through command and mark lists.
-Portals persist in
-`~/Library/Application Support/Lattice/portals-v1.json`; the PDFs are never modified. The jump list
+Marks persist in
+`~/Library/Application Support/Lattice/marks-v1.json`; the PDFs are never modified. The jump list
 is intentionally reset when Lattice quits. Reading positions persist separately in
 `~/Library/Application Support/Lattice/reading-state-v1.json`.
 
@@ -90,20 +90,20 @@ directory.
 ## Architecture
 
 - `macos/Lattice/Sources/Lattice/LatticeWindowController.swift` owns the AppKit window, `PDFView`, native
-  toolbar, document lifecycle, and portal capture.
+  toolbar, document lifecycle, and mark capture.
 - `macos/Lattice/Sources/Lattice/LatticePDFView.swift` adds drag-and-drop and Vim event routing without
   intercepting trackpad scrolling or magnification.
-- `macos/Lattice/Sources/LatticeCore/` contains renderer-independent Vim, portal persistence, and
+- `macos/Lattice/Sources/LatticeCore/` contains renderer-independent Vim, mark persistence, and
   jump-list, command-search, and reading-state models.
-- `macos/Lattice/Sources/Lattice/PortalOverlayView.swift` converts normalized portal geometry back
+- `macos/Lattice/Sources/Lattice/MarkOverlayView.swift` converts normalized mark geometry back
   into PDFKit coordinates and handles box capture and selective source-box interaction.
-- `macos/Lattice/Sources/Lattice/PortalPreviewRenderer.swift` renders destination crops on a serial
+- `macos/Lattice/Sources/Lattice/MarkPreviewRenderer.swift` renders destination crops on a serial
   background queue and caches them by document, geometry, scale, and appearance.
 - `macos/Lattice/Resources/Info.plist` contains the macOS bundle and PDF association metadata.
 
 ## Roadmap
 
-1. Add backlinks and a visual portal manager.
+1. Add backlinks and a visual mark manager.
 2. Add tabs, recents, annotations, and a command palette.
 3. Add optional reading-state persistence.
 4. Add signing, notarization, and releases.

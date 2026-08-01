@@ -24,14 +24,14 @@ public struct CommandDescriptor: Equatable, Sendable {
 
 public enum CommandCatalog {
   public static let commands: [CommandDescriptor] = [
-    .init(name: "marks", summary: "List portal marks in this PDF", action: .showMarks),
+    .init(name: "marks", summary: "List marks in this PDF", action: .showMarks),
     .init(
       name: "open", aliases: ["edit", "e"], summary: "Open a PDF", shortcut: "o", action: .open),
     .init(
       name: "find", aliases: ["search"], summary: "Search this PDF", shortcut: "⌘F", action: .find),
     .init(
-      name: "portal", aliases: ["p"], summary: "Create a portal", shortcut: "p",
-      action: .capturePortal),
+      name: "mark", summary: "Create a mark", shortcut: "m",
+      action: .captureMark),
     .init(name: "back", summary: "Jump backward", shortcut: "⌃O", action: .jumpBackward),
     .init(name: "forward", summary: "Jump forward", shortcut: "⌃I", action: .jumpForward),
     .init(
@@ -56,7 +56,7 @@ public enum CommandCatalog {
     .init(name: "zoomin", summary: "Zoom in", shortcut: "+", action: .zoomIn),
     .init(name: "zoomout", summary: "Zoom out", shortcut: "−", action: .zoomOut),
     .init(name: "help", summary: "Show keyboard shortcuts", shortcut: "?", action: .help),
-    .init(name: "cancel", summary: "Cancel portal capture", shortcut: "Esc", action: .cancelPortal),
+    .init(name: "cancel", summary: "Cancel mark capture", shortcut: "Esc", action: .cancelMark),
     .init(name: "quit", aliases: ["q"], summary: "Quit Lattice", shortcut: "⌘Q", action: .quit),
   ]
 

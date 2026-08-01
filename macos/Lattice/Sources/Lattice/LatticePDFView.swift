@@ -7,7 +7,7 @@ final class LatticePDFView: PDFView {
   var onOpen: (() -> Void)?
   var onHelp: (() -> Void)?
   var onFind: (() -> Void)?
-  var onCapturePortal: (() -> Void)?
+  var onCaptureMark: (() -> Void)?
   var onNonLocalCommand: ((ReaderCommand) -> Void)?
   var onDropPDF: ((URL) -> Void)?
   var onViewportChanged: (() -> Void)?
@@ -84,8 +84,8 @@ final class LatticePDFView: PDFView {
       autoScales = false
       scaleFactor = max(minScaleFactor, scaleFactor - 0.15)
     case .fitWidth: autoScales = true
-    case .capturePortal: onCapturePortal?()
-    case .cancelPortal: onNonLocalCommand?(command)
+    case .captureMark: onCaptureMark?()
+    case .cancelMark: onNonLocalCommand?(command)
     }
   }
 
@@ -108,14 +108,14 @@ final class LatticePDFView: PDFView {
     )
   }
 
-  func go(to anchor: PortalAnchor, scale: CGFloat? = nil) {
+  func go(to anchor: MarkAnchor, scale: CGFloat? = nil) {
     guard let document, let page = document.page(at: anchor.pageIndex) else { return }
     if let scale {
       autoScales = false
       scaleFactor = min(maxScaleFactor, max(minScaleFactor, scale))
     }
     let box = page.bounds(for: .cropBox)
-    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return }
+    guard let target = MarkGeometry.pageRect(for: anchor.bounds, in: box) else { return }
     center(pagePoint: NSPoint(x: target.midX, y: target.midY), on: page)
     onViewportChanged?()
   }

@@ -1,6 +1,6 @@
 import CoreGraphics
 
-public enum PortalGeometry {
+public enum MarkGeometry {
   public static func normalized(rect: CGRect, in pageBounds: CGRect) -> NormalizedRect? {
     let pageBounds = pageBounds.standardized
     let rect = rect.standardized.intersection(pageBounds)

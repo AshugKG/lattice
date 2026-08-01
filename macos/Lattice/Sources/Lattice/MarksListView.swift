@@ -2,42 +2,15 @@ import AppKit
 import LatticeCore
 
 @MainActor
-private final class PortalMarksTableView: NSTableView {
-  var onActivate: (() -> Void)?
-  var onDismiss: (() -> Void)?
-
-  override func keyDown(with event: NSEvent) {
-    if event.keyCode == 53 {
-      onDismiss?()
-      return
-    }
-    if event.keyCode == 36 || event.keyCode == 76 {
-      onActivate?()
-      return
-    }
-    if event.modifierFlags.contains(.control) {
-      if event.keyCode == 45 {
-        moveDown(nil)
-        return
-      }
-      if event.keyCode == 35 {
-        moveUp(nil)
-        return
-      }
-    }
-    super.keyDown(with: event)
-  }
-}
-
-@MainActor
-final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableViewDelegate {
-  var onActivate: ((PortalMark) -> Void)?
+final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableViewDelegate {
+  var onActivate: ((MarkListEntry) -> Void)?
   var onDismiss: (() -> Void)?
 
   private let titleLabel = NSTextField(labelWithString: "Marks")
-  private let tableView = PortalMarksTableView()
-  private let emptyLabel = NSTextField(labelWithString: "No portal marks in this PDF")
-  private var entries: [PortalMark] = []
+  private let tableView = NSTableView()
+  private let emptyLabel = NSTextField(labelWithString: "No marks in this PDF")
+  private var entries: [MarkListEntry] = []
+  private var keyMonitor: Any?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -70,8 +43,6 @@ final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableV
     tableView.delegate = self
     tableView.target = self
     tableView.doubleAction = #selector(activateSelection(_:))
-    tableView.onActivate = { [weak self] in self?.activateSelectedMark() }
-    tableView.onDismiss = { [weak self] in self?.dismiss() }
 
     let scrollView = NSScrollView()
     scrollView.documentView = tableView
@@ -105,12 +76,13 @@ final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableV
 
   required init?(coder: NSCoder) { nil }
 
-  func present(entries: [PortalMark]) {
+  func present(entries: [MarkListEntry]) {
     self.entries = entries
     titleLabel.stringValue = "Marks · \(entries.count)"
     tableView.reloadData()
     emptyLabel.isHidden = !entries.isEmpty
     isHidden = false
+    startKeyMonitor()
     window?.makeFirstResponder(tableView)
     if !entries.isEmpty {
       tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -118,6 +90,7 @@ final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableV
   }
 
   func dismiss() {
+    stopKeyMonitor()
     isHidden = true
     onDismiss?()
   }
@@ -138,7 +111,7 @@ final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableV
     let counterpartName = URL(fileURLWithPath: entry.counterpart.documentPath).lastPathComponent
     let headline =
       "p. \(entry.anchor.pageIndex + 1)  \(direction)  \(counterpartName) · p. \(entry.counterpart.pageIndex + 1)"
-    let snippet = entry.anchor.quotedText ?? entry.counterpart.quotedText ?? "Portal snippet"
+    let snippet = entry.anchor.quotedText ?? entry.counterpart.quotedText ?? "Mark snippet"
     cell.textField?.stringValue =
       "\(headline)\n\(snippet.replacingOccurrences(of: "\n", with: " "))"
     return cell
@@ -151,8 +124,55 @@ final class PortalMarksView: NSVisualEffectView, NSTableViewDataSource, NSTableV
   private func activateSelectedMark() {
     guard entries.indices.contains(tableView.selectedRow) else { return }
     let entry = entries[tableView.selectedRow]
+    stopKeyMonitor()
     isHidden = true
     onActivate?(entry)
+  }
+
+  private func startKeyMonitor() {
+    stopKeyMonitor()
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      switch event.keyCode {
+      case 36, 76:
+        Task { @MainActor [weak self] in
+          guard let self, !self.isHidden else { return }
+          self.activateSelectedMark()
+        }
+        return nil
+      case 53:
+        Task { @MainActor [weak self] in
+          guard let self, !self.isHidden else { return }
+          self.dismiss()
+        }
+        return nil
+      default:
+        break
+      }
+      guard event.modifierFlags.contains(.control) else { return event }
+      let delta: Int
+      switch event.keyCode {
+      case 45:
+        delta = 1
+      case 35:
+        delta = -1
+      default:
+        return event
+      }
+      Task { @MainActor [weak self] in
+        guard let self, !self.isHidden, !self.entries.isEmpty else { return }
+        let current = self.tableView.selectedRow >= 0 ? self.tableView.selectedRow : 0
+        let row = min(self.entries.count - 1, max(0, current + delta))
+        self.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        self.tableView.scrollRowToVisible(row)
+      }
+      return nil
+    }
+  }
+
+  private func stopKeyMonitor() {
+    guard let keyMonitor else { return }
+    NSEvent.removeMonitor(keyMonitor)
+    self.keyMonitor = nil
   }
 
   private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {

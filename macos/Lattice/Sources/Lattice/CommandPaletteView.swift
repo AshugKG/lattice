@@ -2,35 +2,17 @@ import AppKit
 import LatticeCore
 
 @MainActor
-private final class CommandInputField: NSTextField {
-  var onMoveSelection: ((Int) -> Void)?
-
-  override func keyDown(with event: NSEvent) {
-    if event.modifierFlags.contains(.control) {
-      if event.keyCode == 45 {
-        onMoveSelection?(1)
-        return
-      }
-      if event.keyCode == 35 {
-        onMoveSelection?(-1)
-        return
-      }
-    }
-    super.keyDown(with: event)
-  }
-}
-
-@MainActor
 final class CommandPaletteView: NSVisualEffectView, NSTextFieldDelegate, NSTableViewDataSource,
   NSTableViewDelegate
 {
   var onExecute: ((CommandDescriptor) -> Void)?
   var onDismiss: (() -> Void)?
 
-  private let commandField = CommandInputField()
+  private let commandField = NSTextField()
   private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "No matching commands")
   private var matches = CommandCatalog.commands
+  private var keyMonitor: Any?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -54,7 +36,6 @@ final class CommandPaletteView: NSVisualEffectView, NSTextFieldDelegate, NSTable
     commandField.drawsBackground = false
     commandField.focusRingType = .none
     commandField.delegate = self
-    commandField.onMoveSelection = { [weak self] delta in self?.moveSelection(by: delta) }
     commandField.translatesAutoresizingMaskIntoConstraints = false
 
     let separator = NSBox()
@@ -114,10 +95,12 @@ final class CommandPaletteView: NSVisualEffectView, NSTextFieldDelegate, NSTable
     commandField.stringValue = ""
     updateMatches()
     isHidden = false
+    startKeyMonitor()
     window?.makeFirstResponder(commandField)
   }
 
   func dismiss() {
+    stopKeyMonitor()
     isHidden = true
     onDismiss?()
   }
@@ -179,8 +162,52 @@ final class CommandPaletteView: NSVisualEffectView, NSTextFieldDelegate, NSTable
     let selected = tableView.selectedRow >= 0 ? tableView.selectedRow : 0
     guard matches.indices.contains(selected) else { return }
     let command = matches[selected]
+    stopKeyMonitor()
     isHidden = true
     onExecute?(command)
+  }
+
+  private func startKeyMonitor() {
+    stopKeyMonitor()
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      switch event.keyCode {
+      case 36, 76:
+        Task { @MainActor [weak self] in
+          guard let self, !self.isHidden else { return }
+          self.activateSelectedCommand()
+        }
+        return nil
+      case 53:
+        Task { @MainActor [weak self] in
+          guard let self, !self.isHidden else { return }
+          self.dismiss()
+        }
+        return nil
+      default:
+        break
+      }
+      guard event.modifierFlags.contains(.control) else { return event }
+      let delta: Int
+      switch event.keyCode {
+      case 45:
+        delta = 1
+      case 35:
+        delta = -1
+      default:
+        return event
+      }
+      Task { @MainActor [weak self] in
+        guard let self, !self.isHidden else { return }
+        self.moveSelection(by: delta)
+      }
+      return nil
+    }
+  }
+
+  private func stopKeyMonitor() {
+    guard let keyMonitor else { return }
+    NSEvent.removeMonitor(keyMonitor)
+    self.keyMonitor = nil
   }
 
   private func updateMatches() {

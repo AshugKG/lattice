@@ -29,12 +29,12 @@ public struct NormalizedRect: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-public enum PortalEndpoint: String, Codable, Equatable, Hashable, Sendable {
+public enum MarkEndpoint: String, Codable, Equatable, Hashable, Sendable {
   case source
   case destination
 }
 
-public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
+public struct MarkAnchor: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public let documentFingerprint: String
   public let documentPath: String
@@ -58,8 +58,8 @@ public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
     self.quotedText = quotedText
   }
 
-  public func replacingDocumentPath(_ path: String) -> PortalAnchor {
-    PortalAnchor(
+  public func replacingDocumentPath(_ path: String) -> MarkAnchor {
+    MarkAnchor(
       id: id,
       documentFingerprint: documentFingerprint,
       documentPath: path,
@@ -70,16 +70,16 @@ public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-public struct Portal: Codable, Equatable, Identifiable, Sendable {
+public struct Mark: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
-  public let source: PortalAnchor
-  public let destination: PortalAnchor
+  public let source: MarkAnchor
+  public let destination: MarkAnchor
   public let createdAt: Date
 
   public init(
     id: UUID = UUID(),
-    source: PortalAnchor,
-    destination: PortalAnchor,
+    source: MarkAnchor,
+    destination: MarkAnchor,
     createdAt: Date = Date()
   ) {
     self.id = id
@@ -89,8 +89,8 @@ public struct Portal: Codable, Equatable, Identifiable, Sendable {
     self.createdAt = Date(timeIntervalSince1970: milliseconds / 1_000)
   }
 
-  public func replacingDocumentPath(for fingerprint: String, with path: String) -> Portal {
-    Portal(
+  public func replacingDocumentPath(for fingerprint: String, with path: String) -> Mark {
+    Mark(
       id: id,
       source: source.documentFingerprint == fingerprint
         ? source.replacingDocumentPath(path) : source,
@@ -100,24 +100,24 @@ public struct Portal: Codable, Equatable, Identifiable, Sendable {
     )
   }
 
-  public func anchor(at endpoint: PortalEndpoint) -> PortalAnchor {
+  public func anchor(at endpoint: MarkEndpoint) -> MarkAnchor {
     endpoint == .source ? source : destination
   }
 
-  public func oppositeAnchor(from endpoint: PortalEndpoint) -> PortalAnchor {
+  public func oppositeAnchor(from endpoint: MarkEndpoint) -> MarkAnchor {
     endpoint == .source ? destination : source
   }
 }
 
-public struct PortalFile: Codable, Equatable, Sendable {
+public struct MarkFile: Codable, Equatable, Sendable {
   public static let currentSchemaVersion = 1
 
   public let schemaVersion: Int
-  public var portals: [Portal]
+  public var marks: [Mark]
 
-  public init(schemaVersion: Int = currentSchemaVersion, portals: [Portal]) {
+  public init(schemaVersion: Int = currentSchemaVersion, marks: [Mark]) {
     self.schemaVersion = schemaVersion
-    self.portals = portals
+    self.marks = marks
   }
 }
 
