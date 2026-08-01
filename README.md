@@ -15,9 +15,11 @@ The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local devi
 - Password prompt for encrypted documents
 - Native toolbar with page, zoom, Open, Fit, and shortcut controls
 - Vim navigation implemented independently of rendering
-- Working session portal capture from two PDFKit text selections
-- Stable portal anchors containing a SHA-256 document fingerprint, page index, quote, and normalized
-  page-space bounds
+- Persistent rectangle portals stored outside the PDF in Application Support
+- Hover previews, exact portal teleports, cross-document path recovery, and source context-menu deletion
+- Session-only Vim jump history with backward and forward traversal
+- Stable portal anchors containing a SHA-256 document fingerprint, page index, optional extracted text,
+  and normalized page-space bounds
 
 ### Run
 
@@ -42,23 +44,29 @@ distribution are deferred.
 
 ## Keyboard shortcuts
 
-| Shortcut           | Action                                      |
-| ------------------ | ------------------------------------------- |
-| `o`, `Cmd+O`       | Open a PDF                                  |
-| `j`, `k`           | Scroll down or up                           |
-| `h`, `l`           | Scroll left or right                        |
-| `Ctrl+d`, `Ctrl+u` | Move half a screen                          |
-| `gg`, `G`          | Jump to the start or end                    |
-| `[`, `]`           | Previous or next page                       |
-| `+`, `-`           | Zoom in or out                              |
-| `0`                | Fit width                                   |
-| `Cmd+F`            | Search the document                         |
-| `p`                | Capture source/destination portal endpoints |
-| `?`                | Show shortcut help                          |
+| Shortcut           | Action                         |
+| ------------------ | ------------------------------ |
+| `o`, `Cmd+O`       | Open a PDF                     |
+| `j`, `k`           | Scroll down or up              |
+| `h`, `l`           | Scroll left or right           |
+| `Ctrl+d`, `Ctrl+u` | Move half a screen             |
+| `gg`, `G`          | Jump to the start or end       |
+| `[`, `]`           | Previous or next page          |
+| `+`, `-`           | Zoom in or out                 |
+| `0`                | Fit width                      |
+| `Cmd+F`            | Search the document            |
+| `p`                | Start rectangle portal capture |
+| `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
+| `Escape`           | Cancel portal capture          |
+| `?`                | Show shortcut help             |
 
-To create a session portal, select PDF text and press `p`, then select the destination text and
-press `p` again. Lattice immediately draws both anchors in a transparent, click-through overlay;
-persistence and portal navigation are the next portal milestones.
+To create a portal, press `p` and drag a source rectangle. Navigate anywhere—or open another
+PDF—and drag the destination rectangle. Hover the source for a sharp destination preview, click it
+to teleport, or right-click it to delete the portal. At the destination, a compact right-edge
+bookmark badge shows the source page number, previews the source when hovered, and flashes when you
+arrive. Portals persist in
+`~/Library/Application Support/Lattice/portals-v1.json`; the PDFs are never modified. The jump list
+is intentionally reset when Lattice quits.
 
 ## Development
 
@@ -78,9 +86,12 @@ directory.
   toolbar, document lifecycle, and portal capture.
 - `macos/Lattice/Sources/Lattice/LatticePDFView.swift` adds drag-and-drop and Vim event routing without
   intercepting trackpad scrolling or magnification.
-- `macos/Lattice/Sources/LatticeCore/` contains renderer-independent Vim and portal models.
+- `macos/Lattice/Sources/LatticeCore/` contains renderer-independent Vim, portal persistence, and
+  jump-list models.
 - `macos/Lattice/Sources/Lattice/PortalOverlayView.swift` converts normalized portal geometry back
-  into PDFKit coordinates and draws non-interactive passage indicators.
+  into PDFKit coordinates and handles box capture and selective source-box interaction.
+- `macos/Lattice/Sources/Lattice/PortalPreviewRenderer.swift` renders destination crops on a serial
+  background queue and caches them by document, geometry, scale, and appearance.
 - `macos/Lattice/Resources/Info.plist` contains the macOS bundle and PDF association metadata.
 
 The previous PDF.js/Tauri application under `src/` and `src-tauri/` is a frozen reference
@@ -88,9 +99,9 @@ implementation. It is no longer the product path and will not receive renderer o
 
 ## Roadmap
 
-1. Persist portals and reading state locally.
-2. Make portal indicators interactive and add portal navigation and backlinks.
-3. Add tabs, recents, and a command palette.
+1. Add backlinks and a visual portal manager.
+2. Add tabs, recents, annotations, and a command palette.
+3. Add optional reading-state persistence.
 4. Add signing, notarization, and releases.
 
 ## License

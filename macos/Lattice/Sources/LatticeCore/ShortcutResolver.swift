@@ -18,6 +18,9 @@ public enum ReaderCommand: Equatable, Sendable {
   case fitWidth
   case find
   case capturePortal
+  case cancelPortal
+  case jumpBackward
+  case jumpForward
 }
 
 public struct ShortcutModifiers: OptionSet, Sendable {
@@ -38,6 +41,7 @@ public struct ShortcutResolver: Sendable {
 
   public mutating func resolve(
     key: String,
+    keyCode: UInt16? = nil,
     modifiers: ShortcutModifiers = [],
     timestamp: TimeInterval
   ) -> ReaderCommand? {
@@ -47,9 +51,13 @@ public struct ShortcutResolver: Sendable {
       if normalized == "f" { return .find }
     }
     if modifiers.contains(.control) {
+      if keyCode == 31 || normalized == "o" { return .jumpBackward }
+      if keyCode == 34 || normalized == "i" { return .jumpForward }
       if normalized == "d" { return .halfDown }
       if normalized == "u" { return .halfUp }
     }
+
+    if keyCode == 53 || key == "\u{1b}" { return .cancelPortal }
 
     if key == "g" {
       defer { lastG = timestamp }

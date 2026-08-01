@@ -8,6 +8,7 @@ final class LatticePDFView: PDFView {
   var onHelp: (() -> Void)?
   var onFind: (() -> Void)?
   var onCapturePortal: (() -> Void)?
+  var onNonLocalCommand: ((ReaderCommand) -> Void)?
   var onDropPDF: ((URL) -> Void)?
   var onViewportChanged: (() -> Void)?
 
@@ -36,6 +37,7 @@ final class LatticePDFView: PDFView {
     guard
       let command = shortcutResolver.resolve(
         key: key,
+        keyCode: event.keyCode,
         modifiers: modifiers,
         timestamp: event.timestamp
       )
@@ -72,10 +74,8 @@ final class LatticePDFView: PDFView {
     case .scrollRight: scrollBy(x: 88, y: 0)
     case .halfDown: scrollBy(x: 0, y: (scrollView?.contentView.bounds.height ?? 400) / 2)
     case .halfUp: scrollBy(x: 0, y: -(scrollView?.contentView.bounds.height ?? 400) / 2)
-    case .documentStart: scrollToDocumentEdge(end: false)
-    case .documentEnd: scrollToDocumentEdge(end: true)
-    case .nextPage: goToNextPage(nil)
-    case .previousPage: goToPreviousPage(nil)
+    case .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward, .jumpForward:
+      onNonLocalCommand?(command)
     case .zoomIn:
       autoScales = false
       scaleFactor = min(maxScaleFactor, scaleFactor + 0.15)
@@ -84,10 +84,55 @@ final class LatticePDFView: PDFView {
       scaleFactor = max(minScaleFactor, scaleFactor - 0.15)
     case .fitWidth: autoScales = true
     case .capturePortal: onCapturePortal?()
+    case .cancelPortal: onNonLocalCommand?(command)
     }
   }
 
-  private var scrollView: NSScrollView? {
+  func currentJumpLocation(descriptor: DocumentDescriptor) -> JumpLocation? {
+    guard let document, let page = currentPage else { return nil }
+    let viewCenter = NSPoint(x: bounds.midX, y: bounds.midY)
+    let centerPage = self.page(for: viewCenter, nearest: true) ?? page
+    let pagePoint = convert(viewCenter, to: centerPage)
+    let box = centerPage.bounds(for: .cropBox)
+    guard box.width > 0, box.height > 0 else { return nil }
+    return JumpLocation(
+      documentFingerprint: descriptor.fingerprint,
+      documentPath: descriptor.url.path,
+      pageIndex: document.index(for: centerPage),
+      viewportCenter: NormalizedPoint(
+        x: min(1, max(0, (pagePoint.x - box.minX) / box.width)),
+        y: min(1, max(0, (pagePoint.y - box.minY) / box.height))
+      ),
+      scaleFactor: scaleFactor
+    )
+  }
+
+  func go(to anchor: PortalAnchor, scale: CGFloat? = nil) {
+    guard let document, let page = document.page(at: anchor.pageIndex) else { return }
+    if let scale {
+      autoScales = false
+      scaleFactor = min(maxScaleFactor, max(minScaleFactor, scale))
+    }
+    let box = page.bounds(for: .cropBox)
+    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return }
+    center(pagePoint: NSPoint(x: target.midX, y: target.midY), on: page)
+    onViewportChanged?()
+  }
+
+  func restore(_ location: JumpLocation) {
+    guard let document, let page = document.page(at: location.pageIndex) else { return }
+    autoScales = false
+    scaleFactor = min(maxScaleFactor, max(minScaleFactor, location.scaleFactor))
+    let box = page.bounds(for: .cropBox)
+    let point = NSPoint(
+      x: box.minX + box.width * location.viewportCenter.x,
+      y: box.minY + box.height * location.viewportCenter.y
+    )
+    center(pagePoint: point, on: page)
+    onViewportChanged?()
+  }
+
+  var scrollView: NSScrollView? {
     descendants(of: self).compactMap { $0 as? NSScrollView }.first
   }
 
@@ -101,6 +146,31 @@ final class LatticePDFView: PDFView {
     clip.scroll(to: point)
     scrollView.reflectScrolledClipView(clip)
     onViewportChanged?()
+  }
+
+  private func center(pagePoint: NSPoint, on page: PDFPage) {
+    go(to: PDFDestination(page: page, at: pagePoint))
+    DispatchQueue.main.async { [weak self, weak page] in
+      guard let self, let page else { return }
+      self.centerVisible(pagePoint: pagePoint, on: page)
+    }
+  }
+
+  private func centerVisible(pagePoint: NSPoint, on page: PDFPage) {
+    guard let scrollView, let documentView = scrollView.documentView else { return }
+    layoutSubtreeIfNeeded()
+    documentView.layoutSubtreeIfNeeded()
+    let pointInPDFView = convert(pagePoint, from: page)
+    let pointInDocument = documentView.convert(pointInPDFView, from: self)
+    let clip = scrollView.contentView
+    let proposed = NSRect(
+      x: pointInDocument.x - clip.bounds.width / 2,
+      y: pointInDocument.y - clip.bounds.height / 2,
+      width: clip.bounds.width,
+      height: clip.bounds.height
+    )
+    clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
+    scrollView.reflectScrolledClipView(clip)
   }
 
   private func scrollToDocumentEdge(end: Bool) {

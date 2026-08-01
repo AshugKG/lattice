@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
   private var windowController: LatticeWindowController?
+  private var pendingDocumentURLs: [URL] = []
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     installMainMenu()
@@ -11,10 +12,12 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
     controller.showWindow(nil)
     NSApp.activate(ignoringOtherApps: true)
 
-    if let path = CommandLine.arguments.dropFirst().first(where: {
+    let commandLineURL = CommandLine.arguments.dropFirst().first(where: {
       $0.lowercased().hasSuffix(".pdf")
-    }) {
-      controller.openDocument(at: URL(fileURLWithPath: path))
+    }).map { URL(fileURLWithPath: $0) }
+    if let url = pendingDocumentURLs.last ?? commandLineURL {
+      pendingDocumentURLs.removeAll()
+      openDocument(at: url)
     }
   }
 
@@ -23,16 +26,42 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func application(_ sender: NSApplication, openFiles filenames: [String]) {
-    guard let first = filenames.first else {
+    let urls =
+      filenames
+      .map { URL(fileURLWithPath: $0) }
+      .filter { $0.pathExtension.lowercased() == "pdf" }
+    guard !urls.isEmpty else {
       sender.reply(toOpenOrPrint: .failure)
       return
     }
-    windowController?.openDocument(at: URL(fileURLWithPath: first))
+    if windowController == nil {
+      pendingDocumentURLs.append(contentsOf: urls)
+    } else if let url = urls.last {
+      openDocument(at: url)
+    }
     sender.reply(toOpenOrPrint: .success)
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
+  {
+    windowController?.showWindow(nil)
+    windowController?.window?.makeKeyAndOrderFront(nil)
+    return true
   }
 
   @objc private func openDocument(_ sender: Any?) {
     windowController?.presentOpenPanel()
+  }
+
+  private func openDocument(at url: URL) {
+    guard let windowController else {
+      pendingDocumentURLs.append(url)
+      return
+    }
+    windowController.showWindow(nil)
+    windowController.window?.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    windowController.openDocument(at: url)
   }
 
   private func installMainMenu() {
