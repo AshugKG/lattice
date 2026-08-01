@@ -379,7 +379,8 @@ input:focus-visible {
 }
 
 .pdf-viewport .pdfViewer {
-  padding: 36px 36px 8px;
+  padding: calc(27px * var(--scale-factor)) calc(27px * var(--scale-factor))
+    calc(6px * var(--scale-factor));
 }
 
 .pdf-viewport .pdfViewer.is-gesture-zooming {
@@ -388,7 +389,7 @@ input:focus-visible {
 }
 
 .pdf-viewport .pdfViewer.removePageBorders .page {
-  margin: 0 auto 28px;
+  margin: 0 auto calc(21px * var(--scale-factor));
   box-shadow: var(--page-shadow);
 }
 
@@ -609,7 +610,7 @@ kbd {
   }
 
   .pdf-viewport .pdfViewer {
-    padding: 24px;
+    padding: calc(18px * var(--scale-factor));
   }
 }
 

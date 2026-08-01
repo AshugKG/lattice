@@ -6,6 +6,21 @@ export function clampScale(scale: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
+export function roundPdfJsScale(scale: number): number {
+  return Math.round(clampScale(scale) * 100) / 100;
+}
+
+export function getCommittedScrollPosition(
+  start: { left: number; top: number },
+  origin: { x: number; y: number },
+  scaleRatio: number,
+): { left: number; top: number } {
+  return {
+    left: Math.max(0, (start.left + origin.x) * scaleRatio - origin.x),
+    top: Math.max(0, (start.top + origin.y) * scaleRatio - origin.y),
+  };
+}
+
 export function getSafeZoomOrigin(
   viewport: Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>,
   requested: { x: number; y: number },
