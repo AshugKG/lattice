@@ -6,6 +6,10 @@ coverage/
 
 # Rust / Tauri
 src-tauri/target/
+/native/
+macos/**/.build/
+macos/**/.cache/
+macos/**/build/
 src-tauri/gen/
 
 # Editors and operating systems

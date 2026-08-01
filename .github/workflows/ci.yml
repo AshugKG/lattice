@@ -52,3 +52,11 @@ jobs:
 
       - name: Test Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Test native macOS reader
+        if: runner.os == 'macOS'
+        run: bun run native:test
+
+      - name: Build native macOS reader
+        if: runner.os == 'macOS'
+        run: bun run native:build
