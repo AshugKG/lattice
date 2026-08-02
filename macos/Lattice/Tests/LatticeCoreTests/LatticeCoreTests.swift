@@ -19,10 +19,15 @@ private func anchor(
   )
 }
 
-private func location(page: Int, x: Double = 0.5) -> JumpLocation {
+private func location(
+  fingerprint: String = "document",
+  path: String = "/tmp/document.pdf",
+  page: Int,
+  x: Double = 0.5
+) -> JumpLocation {
   JumpLocation(
-    documentFingerprint: "document",
-    documentPath: "/tmp/document.pdf",
+    documentFingerprint: fingerprint,
+    documentPath: path,
     pageIndex: page,
     viewportCenter: NormalizedPoint(x: x, y: 0.5),
     scaleFactor: 1.25
@@ -119,6 +124,49 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
   #expect(jumps.goForward(from: location(page: 1))?.pageIndex == 2)
   jumps.recordBeforeJump(location(page: 9))
   #expect(jumps.forward.isEmpty)
+}
+
+@Test func jumpListTraversesFromHomeAndAcrossDocuments() {
+  var jumps = JumpList()
+  let first = location(fingerprint: "a", path: "/tmp/a.pdf", page: 2)
+  let second = location(fingerprint: "b", path: "/tmp/b.pdf", page: 5)
+  jumps.recordBeforeJump(first)
+  jumps.recordBeforeJump(second)
+
+  // :q leaves the document, then Ctrl+O / Ctrl+I round-trips through home.
+  #expect(jumps.goBackward(from: .home) == second)
+  #expect(jumps.forward.last?.isHome == true)
+  #expect(jumps.goForward(from: second)?.isHome == true)
+  #expect(jumps.goBackward(from: .home) == second)
+
+  #expect(jumps.goBackward(from: second) == first)
+  #expect(jumps.forward.last == second)
+  #expect(jumps.goForward(from: first) == second)
+  #expect(jumps.goForward(from: second)?.isHome == true)
+}
+
+@Test func jumpListKeepsHistoryThroughHomeAndNewDocuments() {
+  var jumps = JumpList()
+  let first = location(fingerprint: "pending:/tmp/a.pdf", path: "/tmp/a.pdf", page: 1)
+  jumps.recordBeforeJump(.home)
+  jumps.recordBeforeJump(first)
+  jumps.recordBeforeJump(.home)
+  let second = location(fingerprint: "pending:/tmp/b.pdf", path: "/tmp/b.pdf", page: 3)
+  jumps.recordBeforeJump(second)
+
+  jumps.rewriteFingerprint(from: "pending:/tmp/a.pdf", to: "sha-a", path: "/tmp/a.pdf")
+  jumps.rewriteFingerprint(from: "pending:/tmp/b.pdf", to: "sha-b", path: "/tmp/b.pdf")
+
+  #expect(jumps.goBackward(from: .home)?.documentFingerprint == "sha-b")
+  #expect(jumps.goBackward(from: location(fingerprint: "sha-b", path: "/tmp/b.pdf", page: 3))?.isHome == true)
+  #expect(
+    jumps.goBackward(from: .home)
+      == location(fingerprint: "sha-a", path: "/tmp/a.pdf", page: 1))
+
+  // Re-recording the current home must not wipe forward history.
+  let forwardCount = jumps.forward.count
+  jumps.recordBeforeJump(.home)
+  #expect(jumps.forward.count == forwardCount)
 }
 
 @Test func jumpListDeduplicatesAndHonorsCapacity() {

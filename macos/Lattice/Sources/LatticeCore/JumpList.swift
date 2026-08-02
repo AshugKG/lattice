@@ -1,6 +1,8 @@
 import Foundation
 
 public struct JumpLocation: Codable, Equatable, Sendable {
+  public static let homeFingerprint = "lattice:home"
+
   public let documentFingerprint: String
   public let documentPath: String
   public let pageIndex: Int
@@ -21,8 +23,22 @@ public struct JumpLocation: Codable, Equatable, Sendable {
     self.scaleFactor = scaleFactor
   }
 
+  /// Session-only sentinel for the recents home screen in the Vim jump list.
+  public static var home: JumpLocation {
+    JumpLocation(
+      documentFingerprint: homeFingerprint,
+      documentPath: "",
+      pageIndex: 0,
+      viewportCenter: NormalizedPoint(x: 0.5, y: 0.5),
+      scaleFactor: 1
+    )
+  }
+
+  public var isHome: Bool { documentFingerprint == Self.homeFingerprint }
+
   public func isEquivalent(to other: JumpLocation) -> Bool {
-    documentFingerprint == other.documentFingerprint && pageIndex == other.pageIndex
+    if isHome || other.isHome { return isHome && other.isHome }
+    return documentFingerprint == other.documentFingerprint && pageIndex == other.pageIndex
       && abs(viewportCenter.x - other.viewportCenter.x) < 0.002
       && abs(viewportCenter.y - other.viewportCenter.y) < 0.002
       && abs(scaleFactor - other.scaleFactor) < 0.01
@@ -55,20 +71,73 @@ public struct JumpList: Sendable {
   }
 
   public mutating func recordBeforeJump(_ location: JumpLocation) {
+    guard !backward.last.isSomeEquivalent(to: location) else { return }
     append(location, to: &backward)
     forward.removeAll()
   }
 
-  public mutating func goBackward(from current: JumpLocation) -> JumpLocation? {
+  public mutating func goBackward(from current: JumpLocation?) -> JumpLocation? {
     guard let target = backward.popLast() else { return nil }
-    append(current, to: &forward)
+    if let current { append(current, to: &forward) }
     return target
   }
 
-  public mutating func goForward(from current: JumpLocation) -> JumpLocation? {
+  public mutating func goForward(from current: JumpLocation?) -> JumpLocation? {
     guard let target = forward.popLast() else { return nil }
-    append(current, to: &backward)
+    if let current { append(current, to: &backward) }
     return target
+  }
+
+  /// Undo a failed backward jump so async restore misses don't drop history.
+  public mutating func cancelBackward(target: JumpLocation, current: JumpLocation?) {
+    if let current, forward.last.isSomeEquivalent(to: current) {
+      _ = forward.popLast()
+    }
+    append(target, to: &backward)
+  }
+
+  /// Undo a failed forward jump so async restore misses don't drop history.
+  public mutating func cancelForward(target: JumpLocation, current: JumpLocation?) {
+    if let current, backward.last.isSomeEquivalent(to: current) {
+      _ = backward.popLast()
+    }
+    append(target, to: &forward)
+  }
+
+  public mutating func rewriteFingerprint(
+    from oldFingerprint: String,
+    to newFingerprint: String,
+    path: String
+  ) {
+    guard oldFingerprint != newFingerprint else { return }
+    backward = backward.map {
+      rewrite($0, from: oldFingerprint, to: newFingerprint, path: path)
+    }
+    forward = forward.map {
+      rewrite($0, from: oldFingerprint, to: newFingerprint, path: path)
+    }
+  }
+
+  private func rewrite(
+    _ location: JumpLocation,
+    from oldFingerprint: String,
+    to newFingerprint: String,
+    path: String
+  ) -> JumpLocation {
+    guard !location.isHome else { return location }
+    let matchesFingerprint = location.documentFingerprint == oldFingerprint
+    let matchesPendingPath =
+      location.documentPath == path
+      && (location.documentFingerprint.hasPrefix("pending:")
+        || location.documentFingerprint == oldFingerprint)
+    guard matchesFingerprint || matchesPendingPath else { return location }
+    return JumpLocation(
+      documentFingerprint: newFingerprint,
+      documentPath: path,
+      pageIndex: location.pageIndex,
+      viewportCenter: location.viewportCenter,
+      scaleFactor: location.scaleFactor
+    )
   }
 
   private func append(_ location: JumpLocation, to stack: inout [JumpLocation]) {

@@ -87,7 +87,8 @@ again reorients the existing two-pane split and copies the active pane's view in
 Use `Ctrl+h/j/k/l` to move focus between panes (the active pane is outlined). `:q` closes the
 active view; with one pane left it returns home. `:qa` always returns home. Clicking in-PDF links (chapters,
 figures, and other go-to annotations) records the prior location on the jump list (`Ctrl+O` /
-`Ctrl+I`).
+`Ctrl+I`). The jump list treats home like a location for the current Lattice session—`:q`, then
+`Ctrl+O` / `Ctrl+I` moves between home and PDFs; quitting Lattice clears it.
 
 Marks persist in
 `~/Library/Application Support/Lattice/marks-v1.json`; the PDFs are never modified. The jump list

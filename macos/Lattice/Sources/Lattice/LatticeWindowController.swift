@@ -106,7 +106,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     if !commandPalette.isHidden { commandPalette.dismiss() }
     if !marksView.isHidden { marksView.dismiss() }
     persistCurrentReadingPosition()
-    if recordJump { recordCurrentBeforeJump() }
+    if recordJump { recordJumpListLocation() }
     let pendingCapture = currentMarkCaptureMode()
     if pendingCapture == .inactive { markDraft = nil }
     hidePreview()
@@ -162,7 +162,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       let fingerprint = await Task.detached(priority: .utility) {
         try? DocumentFingerprint.sha256(of: url)
       }.value
-      guard let self, self.fingerprintGeneration == generation else { return }
+      guard let self else { return }
       let resolvedFingerprint = fingerprint ?? "\(url.lastPathComponent):\(pageCount)"
       let descriptor = DocumentDescriptor(
         fingerprint: resolvedFingerprint,
@@ -170,10 +170,35 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         name: url.lastPathComponent,
         pageCount: pageCount
       )
+      guard self.fingerprintGeneration == generation else {
+        completion?(descriptor)
+        return
+      }
       self.descriptor = descriptor
       for pane in self.panes {
         pane.markOverlay.documentFingerprint = descriptor.fingerprint
         pane.markOverlay.marks = self.marks
+      }
+      if descriptor.fingerprint != provisionalFingerprint {
+        self.jumpList.rewriteFingerprint(
+          from: provisionalFingerprint,
+          to: descriptor.fingerprint,
+          path: url.path
+        )
+        if let draft = self.markDraft,
+          draft.documentFingerprint == provisionalFingerprint
+            || (draft.documentPath == url.path
+              && draft.documentFingerprint.hasPrefix("pending:"))
+        {
+          self.markDraft = MarkAnchor(
+            id: draft.id,
+            documentFingerprint: descriptor.fingerprint,
+            documentPath: url.path,
+            pageIndex: draft.pageIndex,
+            bounds: draft.bounds,
+            quotedText: draft.quotedText
+          )
+        }
       }
       if resumeReadingPosition,
         descriptor.fingerprint != provisionalFingerprint,
@@ -425,6 +450,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
           self.cancelMarkCapture()
           return nil
         }
+        if command == .jumpBackward || command == .jumpForward {
+          self.handleNonLocalCommand(command)
+          return nil
+        }
         return event
       }
       guard self.pdfView.document != nil else { return event }
@@ -457,10 +486,16 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     refreshMarkCaptureStatus()
   }
 
-  private func returnToHome() {
+  private func returnToHome(recordJump: Bool = true) {
+    if !homeView.isHidden, descriptor == nil {
+      showHome()
+      return
+    }
+
     let pendingCapture = currentMarkCaptureMode()
     let pendingDraft = markDraft
     persistCurrentReadingPosition()
+    if recordJump { recordJumpListLocation() }
     hidePreview()
     if !commandPalette.isHidden { commandPalette.dismiss() }
     if !marksView.isHidden { marksView.dismiss() }
@@ -1040,6 +1075,18 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
+  private func currentJumpListLocation() -> JumpLocation? {
+    if !homeView.isHidden || descriptor == nil {
+      return .home
+    }
+    return descriptor.flatMap { pdfView.currentJumpLocation(descriptor: $0) }
+  }
+
+  private func recordJumpListLocation() {
+    guard let location = currentJumpListLocation() else { return }
+    jumpList.recordBeforeJump(location)
+  }
+
   private func recordCurrentBeforeJump() {
     guard let descriptor, let location = pdfView.currentJumpLocation(descriptor: descriptor) else {
       return
@@ -1074,15 +1121,19 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     case .cancelMark:
       cancelMarkCapture()
     case .jumpBackward:
-      guard let descriptor, let current = pdfView.currentJumpLocation(descriptor: descriptor),
-        let target = jumpList.goBackward(from: current)
-      else { return }
-      restore(target)
+      let current = currentJumpListLocation()
+      guard let target = jumpList.goBackward(from: current) else { return }
+      restore(target) { [weak self] success in
+        guard let self, !success else { return }
+        self.jumpList.cancelBackward(target: target, current: current)
+      }
     case .jumpForward:
-      guard let descriptor, let current = pdfView.currentJumpLocation(descriptor: descriptor),
-        let target = jumpList.goForward(from: current)
-      else { return }
-      restore(target)
+      let current = currentJumpListLocation()
+      guard let target = jumpList.goForward(from: current) else { return }
+      restore(target) { [weak self] success in
+        guard let self, !success else { return }
+        self.jumpList.cancelForward(target: target, current: current)
+      }
     case .documentStart, .documentEnd, .nextPage, .previousPage:
       recordCurrentBeforeJump()
       switch command {
@@ -1101,11 +1152,49 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
-  private func restore(_ location: JumpLocation) {
-    if descriptor?.fingerprint == location.documentFingerprint {
-      pdfView.restore(location)
+  private func restore(
+    _ location: JumpLocation,
+    completion: (@MainActor (Bool) -> Void)? = nil
+  ) {
+    if location.isHome {
+      returnToHome(recordJump: false)
+      completion?(true)
       return
     }
+    if let descriptor,
+      descriptor.fingerprint == location.documentFingerprint
+        || descriptor.url.path == location.documentPath
+    {
+      pdfView.restore(location)
+      completion?(true)
+      return
+    }
+
+    let url = URL(fileURLWithPath: location.documentPath)
+    if FileManager.default.fileExists(atPath: url.path) {
+      openDocument(
+        at: url,
+        recordJump: false,
+        resumeReadingPosition: false
+      ) { [weak self] descriptor in
+        guard let self else {
+          completion?(false)
+          return
+        }
+        let matches =
+          descriptor.fingerprint == location.documentFingerprint
+          || descriptor.url.path == location.documentPath
+          || location.documentFingerprint.hasPrefix("pending:")
+        guard matches else {
+          completion?(false)
+          return
+        }
+        self.pdfView.restore(location)
+        completion?(true)
+      }
+      return
+    }
+
     let anchor = MarkAnchor(
       documentFingerprint: location.documentFingerprint,
       documentPath: location.documentPath,
@@ -1117,14 +1206,24 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         height: 0.002
       )
     )
-    resolveURL(for: anchor) { [weak self] url in
-      self?.openDocument(
-        at: url,
+    resolveURL(for: anchor) { [weak self] resolved in
+      guard let self else {
+        completion?(false)
+        return
+      }
+      self.openDocument(
+        at: resolved,
         recordJump: false,
         resumeReadingPosition: false
       ) { descriptor in
-        guard descriptor.fingerprint == location.documentFingerprint else { return }
-        self?.pdfView.restore(location)
+        guard descriptor.fingerprint == location.documentFingerprint
+          || descriptor.url.path == location.documentPath
+        else {
+          completion?(false)
+          return
+        }
+        self.pdfView.restore(location)
+        completion?(true)
       }
     }
   }
