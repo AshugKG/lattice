@@ -43,7 +43,8 @@ public enum CommandCatalog {
     .init(
       name: "open", aliases: ["edit", "e"], summary: "Open a PDF", shortcut: "o", action: .open),
     .init(
-      name: "find", aliases: ["search"], summary: "Search this PDF", shortcut: "⌘F", action: .find),
+      name: "find", aliases: ["search"], summary: "Search forward in this PDF", shortcut: "/",
+      action: .findForward),
     .init(
       name: "mark", summary: "Create a mark", shortcut: "m",
       action: .captureMark),
@@ -70,11 +71,16 @@ public enum CommandCatalog {
       action: .fitWidth),
     .init(name: "zoomin", summary: "Zoom in", shortcut: "+", action: .zoomIn),
     .init(name: "zoomout", summary: "Zoom out", shortcut: "−", action: .zoomOut),
-    .init(name: "help", summary: "Show keyboard shortcuts", shortcut: "?", action: .help),
-    .init(name: "cancel", summary: "Cancel mark capture", shortcut: "Esc", action: .cancelMark),
+    .init(name: "help", summary: "Show keyboard shortcuts", shortcut: ":help", action: .help),
+    .init(
+      name: "cancel", summary: "Cancel mark capture or clear search", shortcut: "Esc",
+      action: .cancelMark),
   ]
 
   public static func exact(_ query: String) -> CommandDescriptor? {
+    if let page = pageNumber(from: query) {
+      return goToPageCommand(page)
+    }
     let query = normalized(query)
     return commands.first { command in
       command.name == query || command.aliases.contains(query)
@@ -82,6 +88,9 @@ public enum CommandCatalog {
   }
 
   public static func matches(_ query: String) -> [CommandDescriptor] {
+    if let page = pageNumber(from: query) {
+      return [goToPageCommand(page)]
+    }
     let query = normalized(query)
     guard !query.isEmpty else { return commands }
     return commands.compactMap { command -> (CommandDescriptor, Int)? in
@@ -96,6 +105,25 @@ public enum CommandCatalog {
       if $0.1 != $1.1 { return $0.1 > $1.1 }
       return $0.0.name < $1.0.name
     }.map(\.0)
+  }
+
+  /// Parses a 1-based page number from Ex input such as `12` or `:12`.
+  public static func pageNumber(from query: String) -> Int? {
+    let digits = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+    guard !digits.isEmpty, digits.allSatisfy(\.isNumber), let page = Int(digits), page >= 1 else {
+      return nil
+    }
+    return page
+  }
+
+  public static func goToPageCommand(_ page: Int) -> CommandDescriptor {
+    .init(
+      name: "\(page)",
+      summary: "Go to page \(page)",
+      shortcut: ":\(page)",
+      action: .goToPage(page)
+    )
   }
 
   private static func normalized(_ query: String) -> String {

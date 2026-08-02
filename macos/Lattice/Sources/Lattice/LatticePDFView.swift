@@ -99,9 +99,10 @@ final class LatticePDFView: PDFView {
     case .scrollRight: scrollBy(x: 88, y: 0)
     case .halfDown: scrollBy(x: 0, y: (scrollView?.contentView.bounds.height ?? 400) / 2)
     case .halfUp: scrollBy(x: 0, y: -(scrollView?.contentView.bounds.height ?? 400) / 2)
-    case .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward, .jumpForward,
-      .showCommandPalette, .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit,
-      .focusLeft, .focusRight, .focusUp, .focusDown, .quit:
+    case .documentStart, .documentEnd, .nextPage, .previousPage, .goToPage, .findForward,
+      .findBackward, .findNext, .findPrevious, .jumpBackward, .jumpForward, .showCommandPalette,
+      .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .focusLeft, .focusRight,
+      .focusUp, .focusDown, .quit:
       onNonLocalCommand?(command)
     case .zoomIn:
       autoScales = false
@@ -113,6 +114,64 @@ final class LatticePDFView: PDFView {
     case .captureMark: onCaptureMark?()
     case .cancelMark: onNonLocalCommand?(command)
     }
+  }
+
+  /// Caret-like selection at the visible viewport edge, for Vim-style find-from-here.
+  /// PDFKit's `findString(fromSelection:)` ignores invalid origins and starts at the document edge,
+  /// so this must return a real page selection even when the point lands in whitespace.
+  func searchOriginSelection(backward: Bool) -> PDFSelection? {
+    guard let document else { return nil }
+    let viewPoint = NSPoint(
+      x: bounds.midX,
+      y: backward ? bounds.minY + 2 : bounds.maxY - 2
+    )
+    guard let page = page(for: viewPoint, nearest: true) ?? currentPage else { return nil }
+    let box = page.bounds(for: .cropBox)
+    let raw = convert(viewPoint, to: page)
+    let pagePoint = CGPoint(
+      x: min(max(raw.x, box.minX), box.maxX),
+      y: min(max(raw.y, box.minY), box.maxY)
+    )
+    let charCount = page.numberOfCharacters
+    if charCount > 0 {
+      var index = page.characterIndex(at: pagePoint)
+      if index < 0 || index >= charCount {
+        index = nearestCharacterIndex(on: page, to: pagePoint, backward: backward) ?? (backward
+          ? charCount - 1 : 0)
+      }
+      let start = max(0, index)
+      let end = min(index + 1, charCount)
+      if let selection = document.selection(
+        from: page, atCharacterIndex: start, to: page, atCharacterIndex: end)
+      {
+        return selection
+      }
+    }
+    return document.selection(from: page, at: pagePoint, to: page, at: pagePoint)
+  }
+
+  private func nearestCharacterIndex(on page: PDFPage, to point: CGPoint, backward: Bool) -> Int? {
+    let count = page.numberOfCharacters
+    guard count > 0 else { return nil }
+    var bestIndex: Int?
+    var bestDistance = CGFloat.greatestFiniteMagnitude
+    let step = max(1, count / 800)
+    for index in stride(from: 0, to: count, by: step) {
+      let bounds = page.characterBounds(at: index)
+      guard !bounds.isNull, !bounds.isEmpty else { continue }
+      let mid = CGPoint(x: bounds.midX, y: bounds.midY)
+      // PDF y grows upward; reading continues toward lower y.
+      if !backward && mid.y > point.y + 0.5 { continue }
+      if backward && mid.y < point.y - 0.5 { continue }
+      let dx = mid.x - point.x
+      let dy = mid.y - point.y
+      let distance = dx * dx + dy * dy
+      if distance < bestDistance {
+        bestDistance = distance
+        bestIndex = index
+      }
+    }
+    return bestIndex ?? (backward ? count - 1 : 0)
   }
 
   private func resolveCommand(from event: NSEvent) -> ReaderCommand? {

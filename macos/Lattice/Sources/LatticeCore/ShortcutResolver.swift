@@ -13,10 +13,15 @@ public enum ReaderCommand: Equatable, Sendable {
   case documentEnd
   case nextPage
   case previousPage
+  case goToPage(Int)
   case zoomIn
   case zoomOut
   case fitWidth
   case find
+  case findForward
+  case findBackward
+  case findNext
+  case findPrevious
   case captureMark
   case cancelMark
   case jumpBackward
@@ -82,7 +87,6 @@ public struct ShortcutResolver: Sendable {
 
     return [
       "o": .open,
-      "?": .help,
       "j": .scrollDown,
       "k": .scrollUp,
       "h": .scrollLeft,
@@ -95,6 +99,10 @@ public struct ShortcutResolver: Sendable {
       "-": .zoomOut,
       "0": .fitWidth,
       "m": .captureMark,
+      "/": .findForward,
+      "?": .findBackward,
+      "n": .findNext,
+      "N": .findPrevious,
       ":": .showCommandPalette,
     ][key]
   }

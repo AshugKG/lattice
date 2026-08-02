@@ -58,6 +58,11 @@ private func location(
   #expect(resolver.resolve(key: "m", timestamp: 3) == .captureMark)
   #expect(resolver.resolve(key: "p", timestamp: 3) == nil)
   #expect(resolver.resolve(key: ":", timestamp: 4) == .showCommandPalette)
+  #expect(resolver.resolve(key: "/", timestamp: 5) == .findForward)
+  #expect(resolver.resolve(key: "?", timestamp: 5) == .findBackward)
+  #expect(resolver.resolve(key: "n", timestamp: 5) == .findNext)
+  #expect(resolver.resolve(key: "N", timestamp: 5) == .findPrevious)
+  #expect(resolver.resolve(key: "?", timestamp: 5) != .help)
 }
 
 @Test func markFileRoundTripsThroughJSON() throws {
@@ -255,10 +260,27 @@ private func location(
   #expect(CommandCatalog.exact("quitall")?.action == .quit)
   #expect(CommandCatalog.exact(":home")?.action == .showHome)
   #expect(CommandCatalog.exact("recents")?.action == .showHome)
+  #expect(CommandCatalog.exact(":help")?.action == .help)
+  #expect(CommandCatalog.exact("help")?.action == .help)
+  #expect(CommandCatalog.exact("find")?.action == .findForward)
   #expect(CommandCatalog.matches("marks").first?.name == "marks")
   #expect(CommandCatalog.matches("mks").first?.name == "marks")
   #expect(CommandCatalog.matches("no command named this").isEmpty)
   #expect(CommandCatalog.matches("").count == CommandCatalog.commands.count)
+}
+
+@Test func commandCatalogParsesGoToPageExCommands() {
+  #expect(CommandCatalog.pageNumber(from: "12") == 12)
+  #expect(CommandCatalog.pageNumber(from: ":12") == 12)
+  #expect(CommandCatalog.pageNumber(from: "  :42  ") == 42)
+  #expect(CommandCatalog.pageNumber(from: "0") == nil)
+  #expect(CommandCatalog.pageNumber(from: "-3") == nil)
+  #expect(CommandCatalog.pageNumber(from: "12a") == nil)
+  #expect(CommandCatalog.pageNumber(from: "marks") == nil)
+  #expect(CommandCatalog.exact(":12")?.action == .goToPage(12))
+  #expect(CommandCatalog.exact("7")?.action == .goToPage(7))
+  #expect(CommandCatalog.matches("12") == [CommandCatalog.goToPageCommand(12)])
+  #expect(CommandCatalog.matches(":99").first?.action == .goToPage(99))
 }
 
 @Test func jumpLocationClampsRestoredState() {

@@ -60,18 +60,21 @@ distribution are deferred.
 | `[`, `]`           | Previous or next page          |
 | `+`, `-`           | Zoom in or out                 |
 | `0`                | Fit width                      |
-| `Cmd+F`            | Search the document            |
+| `/`, `?`           | Search forward or backward     |
+| `n`, `N`           | Next or previous search match  |
+| `Cmd+F`            | Focus the toolbar search field |
 | `m`                | Start rectangle mark capture   |
 | `Ctrl+click`       | Follow a mark or bookmark badge |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
-| `Escape`           | Cancel mark capture            |
+| `Escape`           | Cancel mark capture or clear search |
 | `:`                | Fuzzy-find reader commands     |
+| `:N`               | Go to page N (e.g. `:12`)      |
 | `:marks`           | List marks in the current PDF  |
 | `:home`            | Show the recent PDFs home screen |
+| `:help`            | Show keyboard shortcuts        |
 | `:q`               | Close the active view (home if last) |
 | `:qa`              | Close all views and go home    |
 | `Ctrl+h/j/k/l`     | Focus left/down/up/right split |
-| `?`                | Show shortcut help             |
 
 To create a mark, press `m` and drag a source rectangle. Navigate anywhere—including `:q` / `:home`
 to the recents screen, or opening another PDF—and drag the destination rectangle. Hold Control while

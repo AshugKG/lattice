@@ -8,6 +8,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private let splitView = NSSplitView()
   private let previewCard = MarkPreviewCard(frame: .zero)
   private let commandPalette = CommandPaletteView(frame: .zero)
+  private let searchPrompt = SearchPromptView(frame: .zero)
   private let marksView = MarksListView(frame: .zero)
   private let markRepository = MarkRepository()
   private let readingStateRepository = ReadingStateRepository()
@@ -46,6 +47,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private var hoveredMarkID: UUID?
   private var hoveredEndpoint: MarkEndpoint?
   private var searchOriginRecorded = false
+  private var lastSearchQuery = ""
+  private var lastSearchDirection: SearchPromptView.Direction = .forward
 
   init() {
     let window = NSWindow(
@@ -234,6 +237,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       pdfView.setCurrentSelection(nil, animate: false)
       return
     }
+    lastSearchQuery = query
+    lastSearchDirection = .forward
     if !searchOriginRecorded {
       recordCurrentBeforeJump()
       searchOriginRecorded = true
@@ -266,6 +271,17 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       self.activePane.pdfView.execute(command.action)
     }
     commandPalette.onDismiss = { [weak self] in
+      guard let self else { return }
+      self.activatePane(self.activePane)
+    }
+
+    searchPrompt.translatesAutoresizingMaskIntoConstraints = false
+    searchPrompt.onSearch = { [weak self] query, direction in
+      guard let self else { return }
+      self.activatePane(self.activePane)
+      self.performSearch(query: query, direction: direction, wrap: true)
+    }
+    searchPrompt.onDismiss = { [weak self] in
       guard let self else { return }
       self.activatePane(self.activePane)
     }
@@ -313,6 +329,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     rootView.addSubview(homeView)
     rootView.addSubview(previewCard)
     rootView.addSubview(commandPalette)
+    rootView.addSubview(searchPrompt)
     rootView.addSubview(marksView)
 
     NSLayoutConstraint.activate([
@@ -336,6 +353,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       commandPalette.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -18),
       commandPalette.widthAnchor.constraint(equalToConstant: 640),
       commandPalette.heightAnchor.constraint(equalToConstant: 300),
+      searchPrompt.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+      searchPrompt.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -18),
+      searchPrompt.widthAnchor.constraint(equalToConstant: 420),
+      searchPrompt.heightAnchor.constraint(equalToConstant: 44),
       marksView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
       marksView.centerYAnchor.constraint(equalTo: splitView.centerYAnchor),
       marksView.widthAnchor.constraint(equalToConstant: 680),
@@ -425,7 +446,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       [weak self] event in
       guard let self else { return event }
       guard event.window === self.window else { return event }
-      guard self.commandPalette.isHidden, self.marksView.isHidden else { return event }
+      guard self.commandPalette.isHidden, self.searchPrompt.isHidden, self.marksView.isHidden else {
+        return event
+      }
       if self.window?.firstResponder is NSTextView || self.window?.firstResponder is NSTextField
         || self.window?.firstResponder === self.searchField
       {
@@ -464,9 +487,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         self.handleNonLocalCommand(command)
         return nil
       case .scrollDown, .scrollUp, .scrollLeft, .scrollRight, .halfDown, .halfUp, .zoomIn, .zoomOut,
-        .fitWidth, .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward,
-        .jumpForward, .showCommandPalette, .showMarks, .showHome, .verticalSplit, .horizontalSplit,
-        .closeSplit, .captureMark, .cancelMark, .open, .help, .find, .quit:
+        .fitWidth, .documentStart, .documentEnd, .nextPage, .previousPage, .goToPage, .findForward,
+        .findBackward, .findNext, .findPrevious, .jumpBackward, .jumpForward, .showCommandPalette,
+        .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .captureMark,
+        .cancelMark, .open, .help, .find, .quit:
         if self.secondaryPane != nil {
           self.activatePane(self.activePane)
           self.activePane.pdfView.execute(command)
@@ -748,6 +772,30 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     refreshMarkCaptureStatus()
   }
 
+  private func clearSearch() {
+    lastSearchQuery = ""
+    lastSearchDirection = .forward
+    searchOriginRecorded = false
+    searchField.stringValue = ""
+    for pane in panes {
+      pane.pdfView.setCurrentSelection(nil, animate: false)
+      pane.pdfView.highlightedSelections = nil
+    }
+  }
+
+  private func cancelMarkOrSearch() {
+    if currentMarkCaptureMode() != .inactive {
+      cancelMarkCapture()
+      return
+    }
+    if !searchPrompt.isHidden {
+      searchPrompt.dismiss()
+      return
+    }
+    guard !lastSearchQuery.isEmpty || pdfView.currentSelection != nil else { return }
+    clearSearch()
+  }
+
   private func currentMarkCaptureMode() -> MarkCaptureMode {
     if let mode = capturePane?.markOverlay.captureMode, mode != .inactive {
       return mode
@@ -874,16 +922,102 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
 
   private func showCommandPalette() {
     marksView.dismiss()
+    searchPrompt.dismiss()
     hidePreview()
     commandPalette.present()
   }
 
+  private func showSearchPrompt(direction: SearchPromptView.Direction) {
+    commandPalette.dismiss()
+    marksView.dismiss()
+    hidePreview()
+    searchPrompt.present(direction: direction, initialQuery: lastSearchQuery)
+  }
+
   private func showMarks() {
     commandPalette.dismiss()
+    searchPrompt.dismiss()
     hidePreview()
     let entries =
       descriptor.map { MarksIndex.entries(for: $0.fingerprint, marks: marks) } ?? []
     marksView.present(entries: entries)
+  }
+
+  private func performSearch(
+    query: String,
+    direction: SearchPromptView.Direction,
+    wrap: Bool,
+    fromCurrentSelection: Bool = false
+  ) {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedQuery = trimmed.isEmpty ? lastSearchQuery : trimmed
+    guard !resolvedQuery.isEmpty else {
+      NSSound.beep()
+      return
+    }
+    guard let document = pdfView.document else {
+      NSSound.beep()
+      return
+    }
+
+    lastSearchQuery = resolvedQuery
+    lastSearchDirection = direction
+    searchField.stringValue = resolvedQuery
+
+    var options: NSString.CompareOptions = [.caseInsensitive]
+    if direction == .backward { options.insert(.backwards) }
+
+    // `/`/`?` always start from the viewport. Only `n`/`N` continue from the current match.
+    let origin =
+      fromCurrentSelection
+      ? (pdfView.currentSelection
+        ?? pdfView.searchOriginSelection(backward: direction == .backward))
+      : pdfView.searchOriginSelection(backward: direction == .backward)
+
+    if let origin,
+      let match = document.findString(resolvedQuery, fromSelection: origin, withOptions: options)
+    {
+      recordCurrentBeforeJump()
+      pdfView.setCurrentSelection(match, animate: true)
+      pdfView.go(to: match)
+      return
+    }
+
+    // Wrap only after a real from-here search misses (vim-style).
+    if wrap, origin != nil,
+      let match = document.findString(resolvedQuery, fromSelection: nil, withOptions: options)
+    {
+      recordCurrentBeforeJump()
+      pdfView.setCurrentSelection(match, animate: true)
+      pdfView.go(to: match)
+      return
+    }
+
+    // Origin could not be built; last resort is a whole-document search.
+    if origin == nil,
+      let match = document.findString(resolvedQuery, fromSelection: nil, withOptions: options)
+    {
+      recordCurrentBeforeJump()
+      pdfView.setCurrentSelection(match, animate: true)
+      pdfView.go(to: match)
+      return
+    }
+
+    NSSound.beep()
+  }
+
+  private func findAgain(opposite: Bool) {
+    guard !lastSearchQuery.isEmpty else {
+      NSSound.beep()
+      return
+    }
+    let direction = opposite ? inverted(lastSearchDirection) : lastSearchDirection
+    performSearch(
+      query: lastSearchQuery, direction: direction, wrap: true, fromCurrentSelection: true)
+  }
+
+  private func inverted(_ direction: SearchPromptView.Direction) -> SearchPromptView.Direction {
+    direction == .forward ? .backward : .forward
   }
 
   private func splitDocument(vertical: Bool) {
@@ -1098,6 +1232,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     switch command {
     case .showCommandPalette:
       showCommandPalette()
+    case .findForward:
+      showSearchPrompt(direction: .forward)
+    case .findBackward:
+      showSearchPrompt(direction: .backward)
+    case .findNext:
+      findAgain(opposite: false)
+    case .findPrevious:
+      findAgain(opposite: true)
     case .showMarks:
       showMarks()
     case .showHome:
@@ -1119,7 +1261,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     case .quit:
       returnToHome()
     case .cancelMark:
-      cancelMarkCapture()
+      cancelMarkOrSearch()
     case .jumpBackward:
       let current = currentJumpListLocation()
       guard let target = jumpList.goBackward(from: current) else { return }
@@ -1134,7 +1276,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         guard let self, !success else { return }
         self.jumpList.cancelForward(target: target, current: current)
       }
-    case .documentStart, .documentEnd, .nextPage, .previousPage:
+    case .documentStart, .documentEnd, .nextPage, .previousPage, .goToPage:
       recordCurrentBeforeJump()
       switch command {
       case .documentStart:
@@ -1145,6 +1287,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         }
       case .nextPage: pdfView.goToNextPage(nil)
       case .previousPage: pdfView.goToPreviousPage(nil)
+      case .goToPage(let pageNumber):
+        guard let document = pdfView.document, document.pageCount > 0 else { return }
+        let index = min(max(1, pageNumber), document.pageCount) - 1
+        if let page = document.page(at: index) { pdfView.go(to: page) }
       default: break
       }
     default:
@@ -1280,12 +1426,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       h l     Scroll sideways  ⌃d ⌃u  Half screen
       gg / G  Start / end      [ ]  Previous / next page
       + −     Zoom             0  Fit width
-      ⌘F      Search           m  Create box mark
-      ⌃O / ⌃I Back / forward jump     Esc  Cancel mark
+      / ?     Search forward / back    n N  Next / previous match
+      ⌘F      Toolbar search   m  Create box mark
+      ⌃O / ⌃I Back / forward jump     Esc  Cancel mark / clear search
       ⌃Hover  Preview mark     ⌃Click  Follow mark
-      :       Fuzzy commands   :marks  List marks
+      :       Fuzzy commands   :help  This shortcut list
+      :marks  List marks       :N  Go to page N
       :vsplit Side-by-side PDF :hsplit Top/bottom PDF
-      :home   Recent PDFs home     :q / :qa  Close view / go home
+      :home   Recent PDFs home :q / :qa  Close view / go home
       ⌃h ⌃j ⌃k ⌃l  Focus left/down/up/right split
       """
     alert.addButton(withTitle: "Done")
