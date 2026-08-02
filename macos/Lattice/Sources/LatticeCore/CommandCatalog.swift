@@ -26,6 +26,21 @@ public enum CommandCatalog {
   public static let commands: [CommandDescriptor] = [
     .init(name: "marks", summary: "List marks in this PDF", action: .showMarks),
     .init(
+      name: "home", aliases: ["recents"], summary: "Show the recent PDFs home screen",
+      shortcut: ":home", action: .showHome),
+    .init(
+      name: "vsplit", aliases: ["vs"], summary: "Duplicate the PDF side by side",
+      action: .verticalSplit),
+    .init(
+      name: "hsplit", aliases: ["split", "sp"], summary: "Duplicate the PDF top and bottom",
+      action: .horizontalSplit),
+    .init(
+      name: "q", aliases: ["quit"], summary: "Close the active view (home if last)",
+      shortcut: ":q", action: .closeSplit),
+    .init(
+      name: "qa", aliases: ["quitall"], summary: "Close all views and go home", shortcut: ":qa",
+      action: .quit),
+    .init(
       name: "open", aliases: ["edit", "e"], summary: "Open a PDF", shortcut: "o", action: .open),
     .init(
       name: "find", aliases: ["search"], summary: "Search this PDF", shortcut: "⌘F", action: .find),
@@ -57,7 +72,6 @@ public enum CommandCatalog {
     .init(name: "zoomout", summary: "Zoom out", shortcut: "−", action: .zoomOut),
     .init(name: "help", summary: "Show keyboard shortcuts", shortcut: "?", action: .help),
     .init(name: "cancel", summary: "Cancel mark capture", shortcut: "Esc", action: .cancelMark),
-    .init(name: "quit", aliases: ["q"], summary: "Quit Lattice", shortcut: "⌘Q", action: .quit),
   ]
 
   public static func exact(_ query: String) -> CommandDescriptor? {

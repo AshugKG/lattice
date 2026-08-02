@@ -20,17 +20,73 @@ struct MarkInteractionTarget {
   let rect: NSRect
 }
 
+private struct MarkInteractionKey: Hashable {
+  let markID: UUID
+  let endpoint: MarkEndpoint
+}
+
+@MainActor
+private final class MarkHitTargetView: NSView {
+  let key: MarkInteractionKey
+  var onActivate: (() -> Void)?
+  var onDelete: (() -> Void)?
+
+  private var isPressed = false
+
+  init(key: MarkInteractionKey) {
+    self.key = key
+    super.init(frame: .zero)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override var acceptsFirstResponder: Bool { false }
+
+  override func mouseExited(with event: NSEvent) {
+    isPressed = false
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    isPressed = event.modifierFlags.contains(.control)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    defer { isPressed = false }
+    guard isPressed, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+    onActivate?()
+  }
+
+  override func rightMouseDown(with event: NSEvent) {
+    if event.modifierFlags.contains(.control) {
+      onActivate?()
+      return
+    }
+    guard key.endpoint == .source else {
+      super.rightMouseDown(with: event)
+      return
+    }
+    let menu = NSMenu()
+    let delete = NSMenuItem(title: "Delete Mark", action: #selector(deleteMark), keyEquivalent: "")
+    delete.target = self
+    menu.addItem(delete)
+    NSMenu.popUpContextMenu(menu, with: event, for: self)
+  }
+
+  @objc private func deleteMark() {
+    onDelete?()
+  }
+}
+
 @MainActor
 final class MarkOverlayView: NSView {
   weak var pdfView: PDFView?
-  var marks: [Mark] = [] { didSet { needsDisplay = true } }
-  var documentFingerprint: String? { didSet { needsDisplay = true } }
+  var marks: [Mark] = [] { didSet { rebuildInteractionViews() } }
+  var documentFingerprint: String? { didSet { rebuildInteractionViews() } }
   var captureMode: MarkCaptureMode = .inactive {
     didSet {
       dragStart = nil
       dragCurrent = nil
-      window?.invalidateCursorRects(for: self)
-      needsDisplay = true
+      rebuildInteractionViews()
     }
   }
   var arrivalAnchorID: UUID? { didSet { needsDisplay = true } }
@@ -42,44 +98,52 @@ final class MarkOverlayView: NSView {
   private var dragStart: NSPoint?
   private var dragCurrent: NSPoint?
   private var dragPage: PDFPage?
-  private var pressedMarkID: UUID?
-  private var pressedEndpoint: MarkEndpoint?
-  private var pressedMarkPoint: NSPoint?
   private var hoveredMarkID: UUID?
   private var hoveredEndpoint: MarkEndpoint?
+  private var interactionViews: [MarkInteractionKey: MarkHitTargetView] = [:]
+  private var hoverTrackingArea: NSTrackingArea?
+  private var flagsMonitor: Any?
 
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { true }
 
   func viewportDidChange() {
-    hoveredMarkID = nil
-    hoveredEndpoint = nil
-    onHoverMark?(nil)
-    needsDisplay = true
-    window?.invalidateCursorRects(for: self)
+    layoutInteractionViews()
+  }
+
+  func refreshInteractions() {
+    rebuildInteractionViews()
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    stopFlagsMonitor()
+    guard window != nil else { return }
+    flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+      [weak self] event in
+      let controlHeld = event.modifierFlags.contains(.control)
+      Task { @MainActor [weak self] in
+        self?.updateModifierHoverForCurrentPointer(controlHeld: controlHeld)
+      }
+      return event
+    }
   }
 
   override func updateTrackingAreas() {
     super.updateTrackingAreas()
-    trackingAreas.forEach(removeTrackingArea)
-    addTrackingArea(
-      NSTrackingArea(
-        rect: bounds,
-        options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
-        owner: self,
-        userInfo: nil
-      ))
+    if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+    let hoverTrackingArea = NSTrackingArea(
+      rect: bounds,
+      options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+      owner: self,
+      userInfo: nil
+    )
+    addTrackingArea(hoverTrackingArea)
+    self.hoverTrackingArea = hoverTrackingArea
   }
 
   override func resetCursorRects() {
-    if captureMode == .inactive {
-      for (_, rect) in visibleSourceRects() { addCursorRect(rect, cursor: .pointingHand) }
-      for mark in marks {
-        if let rect = destinationMarkerRect(for: mark) {
-          addCursorRect(rect, cursor: .pointingHand)
-        }
-      }
-    } else {
+    if captureMode != .inactive {
       addCursorRect(bounds, cursor: .crosshair)
     }
   }
@@ -87,28 +151,26 @@ final class MarkOverlayView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard !isHidden, alphaValue > 0.01 else { return nil }
     if captureMode != .inactive { return self }
-    return interactionTarget(at: point) == nil ? nil : self
+    let event = NSApp.currentEvent
+    let isControlClick = event?.modifierFlags.contains(.control) == true
+    let isSecondaryClick = event?.type == .rightMouseDown || event?.type == .rightMouseUp
+    guard isControlClick || isSecondaryClick else { return nil }
+    let hit = super.hitTest(point)
+    return hit === self ? nil : hit
   }
 
   override func mouseDown(with event: NSEvent) {
+    guard captureMode != .inactive, let pdfView else { return }
     let point = convert(event.locationInWindow, from: nil)
-    if captureMode != .inactive {
-      guard let pdfView else { return }
-      let pdfPoint = pdfView.convert(point, from: self)
-      guard let page = pdfView.page(for: pdfPoint, nearest: false) else {
-        NSSound.beep()
-        return
-      }
-      dragPage = page
-      dragStart = point
-      dragCurrent = point
-      needsDisplay = true
+    let pdfPoint = pdfView.convert(point, from: self)
+    guard let page = pdfView.page(for: pdfPoint, nearest: false) else {
+      NSSound.beep()
       return
     }
-    let target = interactionTarget(at: point)
-    pressedMarkID = target?.mark.id
-    pressedEndpoint = target?.endpoint
-    pressedMarkPoint = point
+    dragPage = page
+    dragStart = point
+    dragCurrent = point
+    needsDisplay = true
   }
 
   override func mouseDragged(with event: NSEvent) {
@@ -119,24 +181,7 @@ final class MarkOverlayView: NSView {
   }
 
   override func mouseUp(with event: NSEvent) {
-    let point = convert(event.locationInWindow, from: nil)
-    if captureMode == .inactive {
-      defer {
-        pressedMarkID = nil
-        pressedEndpoint = nil
-        pressedMarkPoint = nil
-      }
-      if let id = pressedMarkID,
-        let endpoint = pressedEndpoint,
-        let start = pressedMarkPoint,
-        hypot(point.x - start.x, point.y - start.y) <= 6,
-        let mark = marks.first(where: { $0.id == id }),
-        let rect = interactionRect(for: mark, endpoint: endpoint)
-      {
-        onActivateMark?(MarkInteractionTarget(mark: mark, endpoint: endpoint, rect: rect))
-      }
-      return
-    }
+    guard captureMode != .inactive else { return }
 
     defer {
       dragStart = nil
@@ -155,43 +200,15 @@ final class MarkOverlayView: NSView {
   }
 
   override func mouseMoved(with event: NSEvent) {
-    guard captureMode == .inactive else { return }
     let point = convert(event.locationInWindow, from: nil)
-    let target = interactionTarget(at: point)
-    guard target?.mark.id != hoveredMarkID || target?.endpoint != hoveredEndpoint else {
-      return
-    }
-    hoveredMarkID = target?.mark.id
-    hoveredEndpoint = target?.endpoint
-    onHoverMark?(target)
-    needsDisplay = true
+    updateModifierHover(
+      at: point,
+      controlHeld: event.modifierFlags.contains(.control)
+    )
   }
 
   override func mouseExited(with event: NSEvent) {
-    hoveredMarkID = nil
-    hoveredEndpoint = nil
-    onHoverMark?(nil)
-    needsDisplay = true
-  }
-
-  override func rightMouseDown(with event: NSEvent) {
-    let point = convert(event.locationInWindow, from: nil)
-    guard let mark = sourceMark(at: point) else {
-      super.rightMouseDown(with: event)
-      return
-    }
-    let menu = NSMenu()
-    let delete = NSMenuItem(
-      title: "Delete Mark", action: #selector(deleteMark(_:)), keyEquivalent: "")
-    delete.representedObject = mark.id
-    delete.target = self
-    menu.addItem(delete)
-    NSMenu.popUpContextMenu(menu, with: event, for: self)
-  }
-
-  @objc private func deleteMark(_ sender: NSMenuItem) {
-    guard let id = sender.representedObject as? UUID else { return }
-    onDeleteMark?(id)
+    clearHoveredMark()
   }
 
   override func draw(_ dirtyRect: NSRect) {
@@ -262,21 +279,6 @@ final class MarkOverlayView: NSView {
       ])
   }
 
-  private func visibleSourceRects() -> [(Mark, NSRect)] {
-    marks.compactMap { mark in
-      guard mark.source.documentFingerprint == documentFingerprint,
-        let rect = overlayRect(for: mark.source)
-      else { return nil }
-      return (mark, rect)
-    }
-  }
-
-  private func sourceMark(at point: NSPoint) -> Mark? {
-    visibleSourceRects()
-      .filter { $0.1.insetBy(dx: -3, dy: -3).contains(point) }
-      .min { $0.1.width * $0.1.height < $1.1.width * $1.1.height }?.0
-  }
-
   private func sourceRect(for mark: Mark) -> NSRect? {
     guard mark.source.documentFingerprint == documentFingerprint else { return nil }
     return overlayRect(for: mark.source)
@@ -301,20 +303,115 @@ final class MarkOverlayView: NSView {
     )
   }
 
-  private func interactionTarget(at point: NSPoint) -> MarkInteractionTarget? {
-    if let mark = sourceMark(at: point), let rect = sourceRect(for: mark) {
-      return MarkInteractionTarget(mark: mark, endpoint: .source, rect: rect)
+  private func interactionRect(for mark: Mark, endpoint: MarkEndpoint) -> NSRect? {
+    endpoint == .source ? sourceRect(for: mark) : destinationMarkerRect(for: mark)
+  }
+
+  private func rebuildInteractionViews() {
+    for view in interactionViews.values {
+      view.removeFromSuperview()
     }
-    for mark in marks.reversed() {
-      if let rect = destinationMarkerRect(for: mark), rect.contains(point) {
-        return MarkInteractionTarget(mark: mark, endpoint: .destination, rect: rect)
+    interactionViews.removeAll(keepingCapacity: true)
+    hoveredMarkID = nil
+    hoveredEndpoint = nil
+    onHoverMark?(nil)
+
+    guard captureMode == .inactive, let documentFingerprint else {
+      needsDisplay = true
+      window?.invalidateCursorRects(for: self)
+      return
+    }
+
+    for mark in marks {
+      if mark.source.documentFingerprint == documentFingerprint {
+        addInteractionView(for: mark.id, endpoint: .source)
       }
+      if mark.destination.documentFingerprint == documentFingerprint {
+        addInteractionView(for: mark.id, endpoint: .destination)
+      }
+    }
+    layoutInteractionViews()
+  }
+
+  private func addInteractionView(for markID: UUID, endpoint: MarkEndpoint) {
+    let key = MarkInteractionKey(markID: markID, endpoint: endpoint)
+    let view = MarkHitTargetView(key: key)
+    view.onActivate = { [weak self] in self?.activate(key) }
+    view.onDelete = { [weak self] in self?.onDeleteMark?(markID) }
+    addSubview(view)
+    interactionViews[key] = view
+  }
+
+  private func layoutInteractionViews() {
+    for (key, view) in interactionViews {
+      guard captureMode == .inactive,
+        let mark = marks.first(where: { $0.id == key.markID }),
+        let rect = interactionRect(for: mark, endpoint: key.endpoint)
+      else {
+        view.isHidden = true
+        continue
+      }
+      let padding: CGFloat = key.endpoint == .source ? 7 : 5
+      let hitRect = rect.insetBy(dx: -padding, dy: -padding).intersection(bounds)
+      view.frame = hitRect
+      view.isHidden = hitRect.isEmpty
+    }
+    needsDisplay = true
+    window?.invalidateCursorRects(for: self)
+  }
+
+  private func activate(_ key: MarkInteractionKey) {
+    guard captureMode == .inactive,
+      let mark = marks.first(where: { $0.id == key.markID }),
+      let rect = interactionRect(for: mark, endpoint: key.endpoint)
+    else { return }
+    onActivateMark?(MarkInteractionTarget(mark: mark, endpoint: key.endpoint, rect: rect))
+  }
+
+  private func updateModifierHover(at point: NSPoint, controlHeld: Bool) {
+    guard captureMode == .inactive, controlHeld, let key = interactionKey(at: point) else {
+      clearHoveredMark()
+      return
+    }
+    guard hoveredMarkID != key.markID || hoveredEndpoint != key.endpoint,
+      let mark = marks.first(where: { $0.id == key.markID }),
+      let rect = interactionRect(for: mark, endpoint: key.endpoint)
+    else { return }
+    hoveredMarkID = key.markID
+    hoveredEndpoint = key.endpoint
+    onHoverMark?(MarkInteractionTarget(mark: mark, endpoint: key.endpoint, rect: rect))
+    needsDisplay = true
+  }
+
+  private func updateModifierHoverForCurrentPointer(controlHeld: Bool) {
+    guard let window else {
+      clearHoveredMark()
+      return
+    }
+    let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+    updateModifierHover(at: convert(windowPoint, from: nil), controlHeld: controlHeld)
+  }
+
+  private func interactionKey(at point: NSPoint) -> MarkInteractionKey? {
+    for case let view as MarkHitTargetView in subviews.reversed()
+    where !view.isHidden && view.frame.contains(point) {
+      return view.key
     }
     return nil
   }
 
-  private func interactionRect(for mark: Mark, endpoint: MarkEndpoint) -> NSRect? {
-    endpoint == .source ? sourceRect(for: mark) : destinationMarkerRect(for: mark)
+  private func clearHoveredMark() {
+    guard hoveredMarkID != nil || hoveredEndpoint != nil else { return }
+    hoveredMarkID = nil
+    hoveredEndpoint = nil
+    onHoverMark?(nil)
+    needsDisplay = true
+  }
+
+  private func stopFlagsMonitor() {
+    guard let flagsMonitor else { return }
+    NSEvent.removeMonitor(flagsMonitor)
+    self.flagsMonitor = nil
   }
 
   private func overlayRect(for anchor: MarkAnchor) -> NSRect? {

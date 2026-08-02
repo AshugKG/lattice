@@ -23,6 +23,14 @@ public enum ReaderCommand: Equatable, Sendable {
   case jumpForward
   case showCommandPalette
   case showMarks
+  case showHome
+  case verticalSplit
+  case horizontalSplit
+  case closeSplit
+  case focusLeft
+  case focusRight
+  case focusUp
+  case focusDown
   case quit
 }
 
@@ -56,8 +64,13 @@ public struct ShortcutResolver: Sendable {
     if modifiers.contains(.control) {
       if keyCode == 31 || normalized == "o" { return .jumpBackward }
       if keyCode == 34 || normalized == "i" { return .jumpForward }
-      if normalized == "d" { return .halfDown }
-      if normalized == "u" { return .halfUp }
+      if normalized == "d" || keyCode == 2 { return .halfDown }
+      if normalized == "u" || keyCode == 32 { return .halfUp }
+      // Prefer key codes: Ctrl+H is delivered as backspace in characters.
+      if keyCode == 4 || normalized == "h" { return .focusLeft }
+      if keyCode == 38 || normalized == "j" { return .focusDown }
+      if keyCode == 40 || normalized == "k" { return .focusUp }
+      if keyCode == 37 || normalized == "l" { return .focusRight }
     }
 
     if keyCode == 53 || key == "\u{1b}" { return .cancelMark }

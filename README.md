@@ -20,6 +20,10 @@ The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local devi
 - Session-only Vim jump history with backward and forward traversal
 - Exact per-document reading position and zoom restored across launches
 - Native fuzzy Ex-command palette and a Vim-style `:marks` mark index
+- Recent-PDF home screen with page thumbnails when Lattice launches with no document
+- Independent two-pane PDF duplication through `:vsplit` and `:hsplit`, with `:q` / `:qa` and `Ctrl+hjkl`
+- Active split pane owns keyboard navigation, half-page motion, and toolbar zoom
+- In-PDF go-to links (chapters, figures, and similar) push onto the Vim jump list
 - Stable mark anchors containing a SHA-256 document fingerprint, page index, optional extracted text,
   and normalized page-space bounds
 
@@ -58,18 +62,33 @@ distribution are deferred.
 | `0`                | Fit width                      |
 | `Cmd+F`            | Search the document            |
 | `m`                | Start rectangle mark capture   |
+| `Ctrl+click`       | Follow a mark or bookmark badge |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
 | `Escape`           | Cancel mark capture            |
 | `:`                | Fuzzy-find reader commands     |
 | `:marks`           | List marks in the current PDF  |
+| `:home`            | Show the recent PDFs home screen |
+| `:q`               | Close the active view (home if last) |
+| `:qa`              | Close all views and go home    |
+| `Ctrl+h/j/k/l`     | Focus left/down/up/right split |
 | `?`                | Show shortcut help             |
 
-To create a mark, press `m` and drag a source rectangle. Navigate anywhere—or open another
-PDF—and drag the destination rectangle. Hover the source for a sharp destination preview, click it
-to teleport, or right-click it to delete the mark. At the destination, a compact right-edge
-bookmark badge shows the source page number, previews the source when hovered, and returns to the
-source when clicked. Run `:marks` to list every mark source in the current PDF; use `Ctrl+N` and
-`Ctrl+P` to move through command and mark lists.
+To create a mark, press `m` and drag a source rectangle. Navigate anywhere—including `:q` / `:home`
+to the recents screen, or opening another PDF—and drag the destination rectangle. Hold Control while
+hovering the source to preview its destination, then Control-click to teleport. Right-click the source
+to delete the mark. At the destination, hold Control over its compact bookmark badge to preview the
+source; Control-clicking the badge returns to the source. Run `:marks` to list every mark source in the
+current PDF; use `Ctrl+N` and `Ctrl+P` to move through command and mark lists.
+
+Run `:vsplit` (or `:vs`) to duplicate the active PDF into side-by-side panes. Run `:hsplit`
+(or `:split`/`:sp`) for top-and-bottom panes. The duplicate starts at the active pane's exact page,
+viewport center, and zoom; afterward, both panes navigate independently. Running either command
+again reorients the existing two-pane split and copies the active pane's view into the other pane.
+Use `Ctrl+h/j/k/l` to move focus between panes (the active pane is outlined). `:q` closes the
+active view; with one pane left it returns home. `:qa` always returns home. Clicking in-PDF links (chapters,
+figures, and other go-to annotations) records the prior location on the jump list (`Ctrl+O` /
+`Ctrl+I`).
+
 Marks persist in
 `~/Library/Application Support/Lattice/marks-v1.json`; the PDFs are never modified. The jump list
 is intentionally reset when Lattice quits. Reading positions persist separately in

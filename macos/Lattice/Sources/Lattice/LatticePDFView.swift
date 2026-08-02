@@ -11,6 +11,8 @@ final class LatticePDFView: PDFView {
   var onNonLocalCommand: ((ReaderCommand) -> Void)?
   var onDropPDF: ((URL) -> Void)?
   var onViewportChanged: (() -> Void)?
+  var onBecameActive: (() -> Void)?
+  var onWillFollowLink: (() -> Void)?
 
   private var shortcutResolver = ShortcutResolver()
 
@@ -26,26 +28,40 @@ final class LatticePDFView: PDFView {
 
   override var acceptsFirstResponder: Bool { true }
 
+  override func becomeFirstResponder() -> Bool {
+    let accepted = super.becomeFirstResponder()
+    if accepted { onBecameActive?() }
+    return accepted
+  }
+
+  override func mouseDown(with event: NSEvent) {
+    window?.makeFirstResponder(self)
+    onBecameActive?()
+    let point = convert(event.locationInWindow, from: nil)
+    if hasInternalNavigationLink(at: point) {
+      onWillFollowLink?()
+    }
+    super.mouseDown(with: event)
+  }
+
   override func keyDown(with event: NSEvent) {
-    guard let key = event.charactersIgnoringModifiers, !key.isEmpty else {
-      super.keyDown(with: event)
+    if let command = resolveCommand(from: event) {
+      execute(command)
       return
     }
-    var modifiers: ShortcutModifiers = []
-    if event.modifierFlags.contains(.command) { modifiers.insert(.command) }
-    if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
-    guard
-      let command = shortcutResolver.resolve(
-        key: key,
-        keyCode: event.keyCode,
-        modifiers: modifiers,
-        timestamp: event.timestamp
-      )
-    else {
-      super.keyDown(with: event)
-      return
+    super.keyDown(with: event)
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard flags.contains(.control) || flags.contains(.command) else {
+      return super.performKeyEquivalent(with: event)
     }
-    execute(command)
+    if let command = resolveCommand(from: event) {
+      execute(command)
+      return true
+    }
+    return super.performKeyEquivalent(with: event)
   }
 
   override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -59,7 +75,16 @@ final class LatticePDFView: PDFView {
   }
 
   override func scrollWheel(with event: NSEvent) {
+    window?.makeFirstResponder(self)
+    onBecameActive?()
     super.scrollWheel(with: event)
+    onViewportChanged?()
+  }
+
+  override func magnify(with event: NSEvent) {
+    window?.makeFirstResponder(self)
+    onBecameActive?()
+    super.magnify(with: event)
     onViewportChanged?()
   }
 
@@ -75,7 +100,8 @@ final class LatticePDFView: PDFView {
     case .halfDown: scrollBy(x: 0, y: (scrollView?.contentView.bounds.height ?? 400) / 2)
     case .halfUp: scrollBy(x: 0, y: -(scrollView?.contentView.bounds.height ?? 400) / 2)
     case .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward, .jumpForward,
-      .showCommandPalette, .showMarks, .quit:
+      .showCommandPalette, .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit,
+      .focusLeft, .focusRight, .focusUp, .focusDown, .quit:
       onNonLocalCommand?(command)
     case .zoomIn:
       autoScales = false
@@ -89,7 +115,35 @@ final class LatticePDFView: PDFView {
     }
   }
 
+  private func resolveCommand(from event: NSEvent) -> ReaderCommand? {
+    let key = event.charactersIgnoringModifiers ?? ""
+    var modifiers: ShortcutModifiers = []
+    if event.modifierFlags.contains(.command) { modifiers.insert(.command) }
+    if event.modifierFlags.contains(.control) { modifiers.insert(.control) }
+    return shortcutResolver.resolve(
+      key: key,
+      keyCode: event.keyCode,
+      modifiers: modifiers,
+      timestamp: event.timestamp
+    )
+  }
+
+  private func hasInternalNavigationLink(at viewPoint: NSPoint) -> Bool {
+    guard let page = page(for: viewPoint, nearest: false) else { return false }
+    let pagePoint = convert(viewPoint, to: page)
+    guard let annotation = page.annotation(at: pagePoint) else { return false }
+    if annotation.destination != nil { return true }
+    if annotation.action is PDFActionGoTo || annotation.action is PDFActionRemoteGoTo {
+      return true
+    }
+    return false
+  }
+
   func currentJumpLocation(descriptor: DocumentDescriptor) -> JumpLocation? {
+    currentJumpLocation(fingerprint: descriptor.fingerprint, path: descriptor.url.path)
+  }
+
+  func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
     guard let document, let page = currentPage else { return nil }
     let viewCenter = NSPoint(x: bounds.midX, y: bounds.midY)
     let centerPage = self.page(for: viewCenter, nearest: true) ?? page
@@ -97,8 +151,8 @@ final class LatticePDFView: PDFView {
     let box = centerPage.bounds(for: .cropBox)
     guard box.width > 0, box.height > 0 else { return nil }
     return JumpLocation(
-      documentFingerprint: descriptor.fingerprint,
-      documentPath: descriptor.url.path,
+      documentFingerprint: fingerprint,
+      documentPath: path,
       pageIndex: document.index(for: centerPage),
       viewportCenter: NormalizedPoint(
         x: min(1, max(0, (pagePoint.x - box.minX) / box.width)),

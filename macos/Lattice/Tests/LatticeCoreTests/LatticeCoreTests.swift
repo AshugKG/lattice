@@ -35,6 +35,15 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
   #expect(resolver.resolve(key: "g", timestamp: 1.5) == .documentStart)
   #expect(resolver.resolve(key: "G", timestamp: 2.0) == .documentEnd)
   #expect(resolver.resolve(key: "d", modifiers: .control, timestamp: 2.0) == .halfDown)
+  #expect(resolver.resolve(key: "h", modifiers: .control, timestamp: 2.1) == .focusLeft)
+  #expect(
+    resolver.resolve(key: "\u{8}", keyCode: 4, modifiers: .control, timestamp: 2.15)
+      == .focusLeft)
+  #expect(resolver.resolve(key: "j", modifiers: .control, timestamp: 2.2) == .focusDown)
+  #expect(resolver.resolve(key: "k", modifiers: .control, timestamp: 2.3) == .focusUp)
+  #expect(resolver.resolve(key: "l", modifiers: .control, timestamp: 2.4) == .focusRight)
+  #expect(
+    resolver.resolve(key: "", keyCode: 37, modifiers: .control, timestamp: 2.5) == .focusRight)
   #expect(
     resolver.resolve(key: "\u{0f}", keyCode: 31, modifiers: .control, timestamp: 3) == .jumpBackward
   )
@@ -188,6 +197,16 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
 @Test func commandCatalogSupportsExactAliasesAndFuzzyOrdering() {
   #expect(CommandCatalog.exact(":marks")?.action == .showMarks)
   #expect(CommandCatalog.exact("e")?.action == .open)
+  #expect(CommandCatalog.exact(":vsplit")?.action == .verticalSplit)
+  #expect(CommandCatalog.exact("vs")?.action == .verticalSplit)
+  #expect(CommandCatalog.exact(":hsplit")?.action == .horizontalSplit)
+  #expect(CommandCatalog.exact("sp")?.action == .horizontalSplit)
+  #expect(CommandCatalog.exact(":q")?.action == .closeSplit)
+  #expect(CommandCatalog.exact("quit")?.action == .closeSplit)
+  #expect(CommandCatalog.exact(":qa")?.action == .quit)
+  #expect(CommandCatalog.exact("quitall")?.action == .quit)
+  #expect(CommandCatalog.exact(":home")?.action == .showHome)
+  #expect(CommandCatalog.exact("recents")?.action == .showHome)
   #expect(CommandCatalog.matches("marks").first?.name == "marks")
   #expect(CommandCatalog.matches("mks").first?.name == "marks")
   #expect(CommandCatalog.matches("no command named this").isEmpty)
@@ -230,4 +249,50 @@ private func location(page: Int, x: Double = 0.5) -> JumpLocation {
   let repository = ReadingStateRepository(fileURL: url)
   #expect(throws: ReadingStateRepositoryError.corruptFile) { try repository.load() }
   #expect(!FileManager.default.fileExists(atPath: url.path))
+}
+
+@Test @MainActor func recentsRepositoryRecordsAndDeduplicates() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let pdfURL = directory.appendingPathComponent("paper.pdf")
+  try Data("%PDF-1.4".utf8).write(to: pdfURL)
+  let repository = RecentsRepository(
+    fileURL: directory.appendingPathComponent("recents.json"), capacity: 2)
+  var recents: [RecentDocument] = []
+  let first = RecentDocument(
+    fingerprint: "a", path: pdfURL.path, name: "paper.pdf", pageCount: 3)
+  try repository.record(first, into: &recents)
+  let secondPath = directory.appendingPathComponent("other.pdf")
+  try Data("%PDF-1.4".utf8).write(to: secondPath)
+  try repository.record(
+    RecentDocument(fingerprint: "b", path: secondPath.path, name: "other.pdf", pageCount: 1),
+    into: &recents)
+  try repository.record(
+    RecentDocument(fingerprint: "a", path: pdfURL.path, name: "paper.pdf", pageCount: 3),
+    into: &recents)
+  #expect(recents.map(\.fingerprint) == ["a", "b"])
+  #expect(try repository.load().map(\.fingerprint) == ["a", "b"])
+}
+
+@Test func recentsSeedFromReadingPositions() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let pdfURL = directory.appendingPathComponent("seed.pdf")
+  try Data("%PDF-1.4".utf8).write(to: pdfURL)
+  let positions = [
+    "fp": ReadingPosition(
+      location: JumpLocation(
+        documentFingerprint: "fp",
+        documentPath: pdfURL.path,
+        pageIndex: 2,
+        viewportCenter: NormalizedPoint(x: 0.5, y: 0.5),
+        scaleFactor: 1
+      ))
+  ]
+  let seeded = RecentsRepository.seeded(from: positions)
+  #expect(seeded.count == 1)
+  #expect(seeded[0].fingerprint == "fp")
+  #expect(seeded[0].name == "seed.pdf")
 }

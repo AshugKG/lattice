@@ -4,28 +4,42 @@ import PDFKit
 
 @MainActor
 final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, NSWindowDelegate {
-  private let pdfView = LatticePDFView()
-  private let markOverlay = MarkOverlayView()
+  private let primaryPane = ReaderPaneView()
+  private let splitView = NSSplitView()
   private let previewCard = MarkPreviewCard(frame: .zero)
   private let commandPalette = CommandPaletteView(frame: .zero)
   private let marksView = MarksListView(frame: .zero)
   private let markRepository = MarkRepository()
   private let readingStateRepository = ReadingStateRepository()
+  private let recentsRepository = RecentsRepository()
   private let previewRenderer = MarkPreviewRenderer()
   private let filenameLabel = NSTextField(labelWithString: "No document open")
   private let pageLabel = NSTextField(labelWithString: "— / —")
   private let scaleLabel = NSTextField(labelWithString: "100%")
-  private let emptyLabel = NSTextField(labelWithString: "Drop a PDF here, or choose Open")
+  private let homeView = RecentsHomeView(frame: .zero)
   private let searchField = NSSearchField()
   private let rootView = NSView()
 
+  private var secondaryPane: ReaderPaneView?
+  private weak var selectedPane: ReaderPaneView?
+  private var activePane: ReaderPaneView { selectedPane ?? primaryPane }
+  private var pdfView: LatticePDFView { activePane.pdfView }
+  private var markOverlay: MarkOverlayView { activePane.markOverlay }
+  private var panes: [ReaderPaneView] {
+    secondaryPane.map { [primaryPane, $0] } ?? [primaryPane]
+  }
+  private var activePaneKeyMonitor: Any?
+  private var paneShortcutResolver = ShortcutResolver()
+
   private var descriptor: DocumentDescriptor?
   private var markDraft: MarkAnchor?
+  private weak var capturePane: ReaderPaneView?
   private var marks: [Mark] = []
   private var readingPositions: [String: ReadingPosition] = [:]
+  private var recents: [RecentDocument] = []
   private var jumpList = JumpList()
   private var observers: [NSObjectProtocol] = []
-  private var scrollBoundsObserver: NSObjectProtocol?
+  private var scrollBoundsObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
   private var fingerprintGeneration = UUID()
   private var hoverWorkItem: DispatchWorkItem?
   private var readingSaveWorkItem: DispatchWorkItem?
@@ -47,10 +61,15 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     window.center()
     super.init(window: window)
     window.delegate = self
+    selectedPane = primaryPane
     configureUI()
-    observePDFView()
+    observePDFView(in: primaryPane)
+    installActivePaneKeyMonitor()
     loadMarks()
     loadReadingState()
+    loadRecents()
+    selectPane(primaryPane)
+    showHome()
   }
 
   required init?(coder: NSCoder) { nil }
@@ -88,21 +107,55 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     if !marksView.isHidden { marksView.dismiss() }
     persistCurrentReadingPosition()
     if recordJump { recordCurrentBeforeJump() }
-    if markOverlay.captureMode == .inactive { markDraft = nil }
-    descriptor = nil
-    markOverlay.documentFingerprint = nil
+    let pendingCapture = currentMarkCaptureMode()
+    if pendingCapture == .inactive { markDraft = nil }
     hidePreview()
-    pdfView.document = document
-    pdfView.autoScales = true
-    installScrollObservation()
-    DispatchQueue.main.async { [weak self] in self?.installScrollObservation() }
-    emptyLabel.isHidden = true
-    filenameLabel.stringValue = url.lastPathComponent
-    window?.title = "\(url.lastPathComponent) — Lattice"
-    updatePageAndScale()
-    window?.makeFirstResponder(pdfView)
+    hideHome()
 
     let pageCount = document.pageCount
+    let knownFingerprint = readingPositions.first(where: {
+      $0.value.location.documentPath == url.path
+    })?.key
+    let provisionalFingerprint = knownFingerprint ?? "pending:\(url.path)"
+    let provisional = DocumentDescriptor(
+      fingerprint: provisionalFingerprint,
+      url: url,
+      name: url.lastPathComponent,
+      pageCount: pageCount
+    )
+    descriptor = provisional
+    for pane in panes {
+      pane.markOverlay.documentFingerprint = provisional.fingerprint
+      pane.markOverlay.marks = marks
+      pane.pdfView.document = document
+      pane.pdfView.autoScales = true
+      installScrollObservation(in: pane)
+    }
+    if pendingCapture != .inactive {
+      primaryPane.markOverlay.captureMode = pendingCapture
+      capturePane = primaryPane
+      for pane in panes where pane !== primaryPane {
+        pane.markOverlay.captureMode = .inactive
+      }
+    }
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      for pane in self.panes {
+        self.installScrollObservation(in: pane)
+      }
+    }
+    window?.title = "\(url.lastPathComponent) — Lattice"
+    updatePageAndScale()
+    activatePane(activePane)
+    refreshMarkCaptureStatus()
+
+    if resumeReadingPosition, let saved = readingPositions[provisional.fingerprint] {
+      let location = saved.location.clamped(pageCount: pageCount)
+      for pane in panes {
+        pane.pdfView.restore(location)
+      }
+    }
+
     let generation = UUID()
     fingerprintGeneration = generation
     Task { [weak self] in
@@ -110,18 +163,28 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         try? DocumentFingerprint.sha256(of: url)
       }.value
       guard let self, self.fingerprintGeneration == generation else { return }
+      let resolvedFingerprint = fingerprint ?? "\(url.lastPathComponent):\(pageCount)"
       let descriptor = DocumentDescriptor(
-        fingerprint: fingerprint ?? "\(url.lastPathComponent):\(pageCount)",
+        fingerprint: resolvedFingerprint,
         url: url,
         name: url.lastPathComponent,
         pageCount: pageCount
       )
       self.descriptor = descriptor
-      self.markOverlay.documentFingerprint = descriptor.fingerprint
-      self.markOverlay.marks = self.marks
-      if resumeReadingPosition, let saved = self.readingPositions[descriptor.fingerprint] {
-        self.pdfView.restore(saved.location.clamped(pageCount: descriptor.pageCount))
+      for pane in self.panes {
+        pane.markOverlay.documentFingerprint = descriptor.fingerprint
+        pane.markOverlay.marks = self.marks
       }
+      if resumeReadingPosition,
+        descriptor.fingerprint != provisionalFingerprint,
+        let saved = self.readingPositions[descriptor.fingerprint]
+      {
+        let location = saved.location.clamped(pageCount: descriptor.pageCount)
+        for pane in self.panes {
+          pane.pdfView.restore(location)
+        }
+      }
+      self.recordRecent(descriptor)
       completion?(descriptor)
     }
   }
@@ -165,55 +228,33 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     toolbar.state = .active
     toolbar.translatesAutoresizingMaskIntoConstraints = false
 
-    pdfView.translatesAutoresizingMaskIntoConstraints = false
-    pdfView.displayMode = .singlePageContinuous
-    pdfView.displayDirection = .vertical
-    pdfView.displaysPageBreaks = true
-    pdfView.pageShadowsEnabled = true
-    pdfView.minScaleFactor = 0.25
-    pdfView.maxScaleFactor = 4.0
-    pdfView.backgroundColor = .windowBackgroundColor
-    pdfView.onOpen = { [weak self] in self?.presentOpenPanel() }
-    pdfView.onHelp = { [weak self] in self?.showShortcutHelp() }
-    pdfView.onFind = { [weak self] in self?.focusSearch(nil) }
-    pdfView.onCaptureMark = { [weak self] in self?.beginMarkCapture() }
-    pdfView.onNonLocalCommand = { [weak self] command in self?.handleNonLocalCommand(command) }
-    pdfView.onDropPDF = { [weak self] url in self?.openDocument(at: url) }
-    pdfView.onViewportChanged = { [weak self] in
-      self?.markOverlay.viewportDidChange()
-      self?.scheduleReadingPositionSave()
-    }
-
-    markOverlay.translatesAutoresizingMaskIntoConstraints = false
-    markOverlay.pdfView = pdfView
-    markOverlay.onBoxCaptured = { [weak self] box in self?.capture(box) }
-    markOverlay.onActivateMark = { [weak self] target in self?.activate(target) }
-    markOverlay.onDeleteMark = { [weak self] id in self?.deleteMark(id) }
-    markOverlay.onHoverMark = { [weak self] target in self?.hover(target) }
-    pdfView.addSubview(markOverlay)
+    configureReaderPane(primaryPane)
+    splitView.translatesAutoresizingMaskIntoConstraints = false
+    splitView.isVertical = true
+    splitView.dividerStyle = .thin
+    splitView.addArrangedSubview(primaryPane)
 
     commandPalette.translatesAutoresizingMaskIntoConstraints = false
     commandPalette.onExecute = { [weak self] command in
       guard let self else { return }
-      self.window?.makeFirstResponder(self.pdfView)
-      self.pdfView.execute(command.action)
+      self.activatePane(self.activePane)
+      self.activePane.pdfView.execute(command.action)
     }
     commandPalette.onDismiss = { [weak self] in
       guard let self else { return }
-      self.window?.makeFirstResponder(self.pdfView)
+      self.activatePane(self.activePane)
     }
 
     marksView.translatesAutoresizingMaskIntoConstraints = false
     marksView.onActivate = { [weak self] mark in self?.activate(mark) }
     marksView.onDismiss = { [weak self] in
       guard let self else { return }
-      self.window?.makeFirstResponder(self.pdfView)
+      self.activatePane(self.activePane)
     }
 
-    emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-    emptyLabel.font = .systemFont(ofSize: 17, weight: .medium)
-    emptyLabel.textColor = .secondaryLabelColor
-    emptyLabel.alignment = .center
+    homeView.translatesAutoresizingMaskIntoConstraints = false
+    homeView.onOpen = { [weak self] url in self?.openDocument(at: url) }
+    homeView.onBrowse = { [weak self] in self?.presentOpenPanel() }
 
     let openButton = button(symbol: "folder", label: "Open", action: #selector(openPressed(_:)))
     let zoomOut = button(symbol: "minus", label: nil, action: #selector(zoomOutPressed(_:)))
@@ -243,8 +284,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     stack.translatesAutoresizingMaskIntoConstraints = false
     toolbar.addSubview(stack)
     rootView.addSubview(toolbar)
-    rootView.addSubview(pdfView)
-    rootView.addSubview(emptyLabel)
+    rootView.addSubview(splitView)
+    rootView.addSubview(homeView)
     rootView.addSubview(previewCard)
     rootView.addSubview(commandPalette)
     rootView.addSubview(marksView)
@@ -258,63 +299,280 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -14),
       stack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
       filenameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
-      pdfView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-      pdfView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-      pdfView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-      pdfView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-      markOverlay.topAnchor.constraint(equalTo: pdfView.topAnchor),
-      markOverlay.leadingAnchor.constraint(equalTo: pdfView.leadingAnchor),
-      markOverlay.trailingAnchor.constraint(equalTo: pdfView.trailingAnchor),
-      markOverlay.bottomAnchor.constraint(equalTo: pdfView.bottomAnchor),
-      emptyLabel.centerXAnchor.constraint(equalTo: pdfView.centerXAnchor),
-      emptyLabel.centerYAnchor.constraint(equalTo: pdfView.centerYAnchor),
+      splitView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+      splitView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+      splitView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+      splitView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+      homeView.topAnchor.constraint(equalTo: splitView.topAnchor),
+      homeView.leadingAnchor.constraint(equalTo: splitView.leadingAnchor),
+      homeView.trailingAnchor.constraint(equalTo: splitView.trailingAnchor),
+      homeView.bottomAnchor.constraint(equalTo: splitView.bottomAnchor),
       commandPalette.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
       commandPalette.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -18),
       commandPalette.widthAnchor.constraint(equalToConstant: 640),
       commandPalette.heightAnchor.constraint(equalToConstant: 300),
       marksView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
-      marksView.centerYAnchor.constraint(equalTo: pdfView.centerYAnchor),
+      marksView.centerYAnchor.constraint(equalTo: splitView.centerYAnchor),
       marksView.widthAnchor.constraint(equalToConstant: 680),
       marksView.heightAnchor.constraint(equalToConstant: 420),
     ])
   }
 
-  private func observePDFView() {
+  private func configureReaderPane(_ pane: ReaderPaneView) {
+    let pdfView = pane.pdfView
+    let markOverlay = pane.markOverlay
+    pdfView.onBecameActive = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+    }
+    pdfView.onOpen = { [weak self] in self?.presentOpenPanel() }
+    pdfView.onHelp = { [weak self] in self?.showShortcutHelp() }
+    pdfView.onFind = { [weak self] in self?.focusSearch(nil) }
+    pdfView.onCaptureMark = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.beginMarkCapture()
+    }
+    pdfView.onNonLocalCommand = { [weak self, weak pane] command in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.handleNonLocalCommand(command)
+    }
+    pdfView.onDropPDF = { [weak self, weak pane] url in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.openDocument(at: url)
+    }
+    pdfView.onViewportChanged = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      if self.selectedPane !== pane { self.activatePane(pane) }
+      pane.markOverlay.viewportDidChange()
+      self.scheduleReadingPositionSave()
+    }
+    pdfView.onWillFollowLink = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.recordCurrentBeforeJump()
+    }
+    markOverlay.onBoxCaptured = { [weak self, weak pane] box in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.capture(box)
+    }
+    markOverlay.onActivateMark = { [weak self, weak pane] target in
+      guard let self, let pane else { return }
+      self.activatePane(pane)
+      self.activate(target)
+    }
+    markOverlay.onDeleteMark = { [weak self] id in self?.deleteMark(id) }
+    markOverlay.onHoverMark = { [weak self, weak markOverlay] target in
+      guard let self, let markOverlay else { return }
+      self.hover(target, from: markOverlay)
+    }
+  }
+
+  private func selectPane(_ pane: ReaderPaneView) {
+    selectedPane = pane
+    let splitActive = secondaryPane != nil
+    for candidate in panes {
+      candidate.showsActiveChrome = splitActive
+      candidate.setActivePane(candidate === pane)
+    }
+    updatePageAndScale()
+  }
+
+  private func activatePane(_ pane: ReaderPaneView) {
+    if selectedPane !== pane {
+      selectPane(pane)
+    } else {
+      let splitActive = secondaryPane != nil
+      pane.showsActiveChrome = splitActive
+      pane.setActivePane(true)
+      updatePageAndScale()
+    }
+    if window?.firstResponder !== pane.pdfView {
+      window?.makeFirstResponder(pane.pdfView)
+    }
+  }
+
+  private func installActivePaneKeyMonitor() {
+    activePaneKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
+      guard let self else { return event }
+      guard event.window === self.window else { return event }
+      guard self.commandPalette.isHidden, self.marksView.isHidden else { return event }
+      if self.window?.firstResponder is NSTextView || self.window?.firstResponder is NSTextField
+        || self.window?.firstResponder === self.searchField
+      {
+        return event
+      }
+
+      var modifiers: ShortcutModifiers = []
+      let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      if flags.contains(.command) { modifiers.insert(.command) }
+      if flags.contains(.control) { modifiers.insert(.control) }
+      guard
+        let command = self.paneShortcutResolver.resolve(
+          key: event.charactersIgnoringModifiers ?? "",
+          keyCode: event.keyCode,
+          modifiers: modifiers,
+          timestamp: event.timestamp
+        )
+      else { return event }
+
+      if !self.homeView.isHidden {
+        if command == .cancelMark, self.currentMarkCaptureMode() != .inactive {
+          self.cancelMarkCapture()
+          return nil
+        }
+        return event
+      }
+      guard self.pdfView.document != nil else { return event }
+
+      switch command {
+      case .focusLeft, .focusRight, .focusUp, .focusDown:
+        guard self.secondaryPane != nil else { return event }
+        self.handleNonLocalCommand(command)
+        return nil
+      case .scrollDown, .scrollUp, .scrollLeft, .scrollRight, .halfDown, .halfUp, .zoomIn, .zoomOut,
+        .fitWidth, .documentStart, .documentEnd, .nextPage, .previousPage, .jumpBackward,
+        .jumpForward, .showCommandPalette, .showMarks, .showHome, .verticalSplit, .horizontalSplit,
+        .closeSplit, .captureMark, .cancelMark, .open, .help, .find, .quit:
+        if self.secondaryPane != nil {
+          self.activatePane(self.activePane)
+          self.activePane.pdfView.execute(command)
+          return nil
+        }
+        return event
+      }
+    }
+  }
+
+  private func showHome() {
+    homeView.setRecents(recents)
+    homeView.isHidden = false
+    pageLabel.stringValue = "— / —"
+    scaleLabel.stringValue = "100%"
+    window?.title = "Lattice"
+    refreshMarkCaptureStatus()
+  }
+
+  private func returnToHome() {
+    let pendingCapture = currentMarkCaptureMode()
+    let pendingDraft = markDraft
+    persistCurrentReadingPosition()
+    hidePreview()
+    if !commandPalette.isHidden { commandPalette.dismiss() }
+    if !marksView.isHidden { marksView.dismiss() }
+
+    if let secondary = secondaryPane {
+      if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
+        NotificationCenter.default.removeObserver(observer)
+      }
+      secondary.markOverlay.captureMode = .inactive
+      secondary.pdfView.document = nil
+      secondary.removeFromSuperview()
+      secondaryPane = nil
+    }
+
+    for pane in panes {
+      pane.pdfView.document = nil
+      pane.markOverlay.documentFingerprint = nil
+      pane.markOverlay.marks = marks
+      pane.markOverlay.captureMode = .inactive
+      pane.showsActiveChrome = false
+      pane.setActivePane(pane === primaryPane)
+    }
+    if pendingCapture != .inactive {
+      markDraft = pendingDraft
+      primaryPane.markOverlay.captureMode = pendingCapture
+      capturePane = primaryPane
+    } else {
+      markDraft = nil
+      capturePane = nil
+    }
+    descriptor = nil
+    fingerprintGeneration = UUID()
+    selectPane(primaryPane)
+    showHome()
+  }
+
+  private func hideHome() {
+    homeView.isHidden = true
+  }
+
+  private func loadRecents() {
+    do {
+      recents = try recentsRepository.load()
+    } catch {
+      recents = []
+    }
+    if recents.isEmpty {
+      recents = RecentsRepository.seeded(from: readingPositions)
+      if !recents.isEmpty {
+        try? recentsRepository.save(recents)
+      }
+    }
+    homeView.setRecents(recents)
+  }
+
+  private func recordRecent(_ descriptor: DocumentDescriptor) {
+    let recent = RecentDocument(
+      fingerprint: descriptor.fingerprint,
+      path: descriptor.url.path,
+      name: descriptor.name,
+      pageCount: descriptor.pageCount
+    )
+    do {
+      try recentsRepository.record(recent, into: &recents)
+      homeView.setRecents(recents)
+    } catch {
+      // Keep the in-memory list even if persistence fails.
+      recents.removeAll { $0.fingerprint == recent.fingerprint || $0.path == recent.path }
+      recents.insert(recent, at: 0)
+      homeView.setRecents(recents)
+    }
+  }
+
+  private func observePDFView(in pane: ReaderPaneView) {
     observers.append(
       NotificationCenter.default.addObserver(
-        forName: .PDFViewPageChanged, object: pdfView, queue: .main
-      ) { [weak self] _ in
+        forName: .PDFViewPageChanged, object: pane.pdfView, queue: .main
+      ) { [weak self, weak pane] _ in
         MainActor.assumeIsolated {
-          self?.updatePageAndScale()
-          self?.scheduleReadingPositionSave()
+          guard let self, let pane else { return }
+          if self.activePane === pane { self.updatePageAndScale() }
+          self.scheduleReadingPositionSave()
         }
       })
     observers.append(
       NotificationCenter.default.addObserver(
-        forName: .PDFViewScaleChanged, object: pdfView, queue: .main
-      ) { [weak self] _ in
+        forName: .PDFViewScaleChanged, object: pane.pdfView, queue: .main
+      ) { [weak self, weak pane] _ in
         MainActor.assumeIsolated {
-          self?.updatePageAndScale()
-          self?.scheduleReadingPositionSave()
+          guard let self, let pane else { return }
+          if self.activePane === pane { self.updatePageAndScale() }
+          self.scheduleReadingPositionSave()
         }
       })
   }
 
-  private func installScrollObservation() {
-    if let scrollBoundsObserver {
-      NotificationCenter.default.removeObserver(scrollBoundsObserver)
-      self.scrollBoundsObserver = nil
+  private func installScrollObservation(in pane: ReaderPaneView) {
+    let identifier = ObjectIdentifier(pane)
+    if let observer = scrollBoundsObservers.removeValue(forKey: identifier) {
+      NotificationCenter.default.removeObserver(observer)
     }
-    guard let clipView = pdfView.scrollView?.contentView else { return }
+    guard let clipView = pane.pdfView.scrollView?.contentView else { return }
     clipView.postsBoundsChangedNotifications = true
-    scrollBoundsObserver = NotificationCenter.default.addObserver(
+    scrollBoundsObservers[identifier] = NotificationCenter.default.addObserver(
       forName: NSView.boundsDidChangeNotification,
       object: clipView,
       queue: .main
-    ) { [weak self] _ in
+    ) { [weak self, weak pane] _ in
       MainActor.assumeIsolated {
-        guard let self else { return }
-        self.markOverlay.viewportDidChange()
+        guard let self, let pane else { return }
+        pane.markOverlay.viewportDidChange()
+        if self.activePane !== pane { return }
         self.scheduleReadingPositionSave()
       }
     }
@@ -323,10 +581,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private func loadMarks() {
     do {
       marks = try markRepository.load()
-      markOverlay.marks = marks
+      for pane in panes {
+        pane.markOverlay.marks = marks
+      }
     } catch {
       marks = []
-      markOverlay.marks = []
+      for pane in panes {
+        pane.markOverlay.marks = []
+      }
       showError(
         title: "Mark data could not be loaded",
         message: "The invalid data was moved aside. New marks can still be created.")
@@ -341,7 +603,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         title: "Mark could not be saved",
         message: "It will remain available for this session only.")
     }
-    markOverlay.marks = marks
+    for pane in panes {
+      pane.markOverlay.marks = marks
+    }
   }
 
   private func loadReadingState() {
@@ -390,10 +654,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       return
     }
     guard markOverlay.captureMode == .inactive else { return }
+    capturePane = activePane
     markDraft = nil
     markOverlay.captureMode = .source
     hidePreview()
-    filenameLabel.stringValue = "Mark source · drag a box · Esc cancels"
+    refreshMarkCaptureStatus()
   }
 
   private func capture(_ box: CapturedMarkBox) {
@@ -401,6 +666,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       NSSound.beep()
       return
     }
+    let overlay = capturePane?.markOverlay ?? markOverlay
     let anchor = MarkAnchor(
       documentFingerprint: descriptor.fingerprint,
       documentPath: descriptor.url.path,
@@ -408,11 +674,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       bounds: box.bounds,
       quotedText: box.quotedText
     )
-    switch markOverlay.captureMode {
+    switch overlay.captureMode {
     case .source:
       markDraft = anchor
-      markOverlay.captureMode = .destination
-      filenameLabel.stringValue = "Mark destination · navigate or open a PDF, then drag a box"
+      overlay.captureMode = .destination
+      refreshMarkCaptureStatus()
     case .destination:
       guard let source = markDraft else {
         cancelMarkCapture()
@@ -420,19 +686,50 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       }
       marks.append(Mark(source: source, destination: anchor))
       markDraft = nil
-      markOverlay.captureMode = .inactive
+      overlay.captureMode = .inactive
+      capturePane = nil
       saveMarks()
       filenameLabel.stringValue = "Mark created · \(marks.count) total"
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.markOverlay.refreshInteractions()
+        self.window?.makeFirstResponder(self.pdfView)
+      }
     case .inactive:
       break
     }
   }
 
   private func cancelMarkCapture() {
-    guard markOverlay.captureMode != .inactive else { return }
+    guard
+      let overlay = capturePane?.markOverlay
+        ?? panes.map(\.markOverlay).first(where: {
+          $0.captureMode != .inactive
+        })
+    else { return }
     markDraft = nil
-    markOverlay.captureMode = .inactive
-    filenameLabel.stringValue = descriptor?.name ?? "No document open"
+    overlay.captureMode = .inactive
+    capturePane = nil
+    refreshMarkCaptureStatus()
+  }
+
+  private func currentMarkCaptureMode() -> MarkCaptureMode {
+    if let mode = capturePane?.markOverlay.captureMode, mode != .inactive {
+      return mode
+    }
+    return panes.map(\.markOverlay.captureMode).first(where: { $0 != .inactive }) ?? .inactive
+  }
+
+  private func refreshMarkCaptureStatus() {
+    switch currentMarkCaptureMode() {
+    case .source:
+      filenameLabel.stringValue = "Mark source · drag a box · Esc cancels"
+    case .destination:
+      filenameLabel.stringValue =
+        "Mark destination · navigate, :q / home, or open a PDF, then drag a box"
+    case .inactive:
+      filenameLabel.stringValue = descriptor?.name ?? "No document open"
+    }
   }
 
   private func deleteMark(_ id: UUID) {
@@ -441,7 +738,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     saveMarks()
   }
 
-  private func hover(_ target: MarkInteractionTarget?) {
+  private func hover(_ target: MarkInteractionTarget?, from overlay: MarkOverlayView) {
     hoverWorkItem?.cancel()
     guard let target else {
       hidePreview()
@@ -455,7 +752,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     let title =
       "\(URL(fileURLWithPath: previewAnchor.documentPath).lastPathComponent) · page \(previewAnchor.pageIndex + 1)"
     previewCard.showLoading(title: title)
-    placePreview(beside: target.rect)
+    placePreview(beside: target.rect, from: overlay)
     let work = DispatchWorkItem { [weak self] in
       guard let self, self.hoveredMarkID == mark.id,
         self.hoveredEndpoint == target.endpoint
@@ -478,7 +775,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         case .image(let image): self.previewCard.show(image: image, title: title)
         case .unavailable(let message): self.previewCard.showUnavailable(message, title: title)
         }
-        self.placePreview(beside: target.rect)
+        self.placePreview(beside: target.rect, from: overlay)
       }
     }
     hoverWorkItem = work
@@ -493,8 +790,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     previewCard.isHidden = true
   }
 
-  private func placePreview(beside overlayRect: NSRect) {
-    let source = rootView.convert(overlayRect, from: markOverlay)
+  private func placePreview(beside overlayRect: NSRect, from overlay: MarkOverlayView) {
+    let source = rootView.convert(overlayRect, from: overlay)
     let size = NSSize(width: 440, height: 300)
     var x = source.maxX + 12
     if x + size.width > rootView.bounds.maxX - 12 { x = source.minX - size.width - 12 }
@@ -554,6 +851,143 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     marksView.present(entries: entries)
   }
 
+  private func splitDocument(vertical: Bool) {
+    let sourcePane = activePane
+    guard let document = sourcePane.pdfView.document else {
+      showError(title: "Open a PDF first", message: "Open a PDF before creating a split.")
+      return
+    }
+    guard panes.allSatisfy({ $0.markOverlay.captureMode == .inactive }) else {
+      showError(title: "Finish the current mark", message: "Complete or cancel mark capture first.")
+      return
+    }
+
+    let fingerprint =
+      descriptor?.fingerprint ?? sourcePane.markOverlay.documentFingerprint ?? "pending"
+    let path = descriptor?.url.path ?? document.documentURL?.path ?? ""
+    let location = sourcePane.pdfView.currentJumpLocation(fingerprint: fingerprint, path: path)
+    let targetPane: ReaderPaneView
+    if let secondaryPane {
+      targetPane = sourcePane === primaryPane ? secondaryPane : primaryPane
+    } else {
+      let pane = ReaderPaneView()
+      secondaryPane = pane
+      configureReaderPane(pane)
+      observePDFView(in: pane)
+      splitView.addArrangedSubview(pane)
+      targetPane = pane
+    }
+
+    splitView.isVertical = vertical
+    targetPane.pdfView.document = document
+    targetPane.pdfView.autoScales = false
+    targetPane.pdfView.scaleFactor = sourcePane.pdfView.scaleFactor
+    targetPane.markOverlay.documentFingerprint = fingerprint
+    targetPane.markOverlay.marks = marks
+    activatePane(targetPane)
+    finalizeSplitLayout(
+      target: targetPane, location: location, vertical: vertical, attempt: 0)
+  }
+
+  private func finalizeSplitLayout(
+    target: ReaderPaneView,
+    location: JumpLocation?,
+    vertical: Bool,
+    attempt: Int
+  ) {
+    splitView.layoutSubtreeIfNeeded()
+    splitView.adjustSubviews()
+    let length = vertical ? splitView.bounds.width : splitView.bounds.height
+    if length > 1, splitView.subviews.count > 1 {
+      splitView.setPosition(
+        max(1, (length - splitView.dividerThickness) / 2),
+        ofDividerAt: 0
+      )
+    }
+    if let location {
+      target.pdfView.restore(location)
+    }
+    target.markOverlay.viewportDidChange()
+    installScrollObservation(in: target)
+    activatePane(target)
+
+    let needsRetry = length <= 1 || target.pdfView.scrollView == nil
+    if attempt == 0 || (needsRetry && attempt < 4) {
+      DispatchQueue.main.async { [weak self, weak target] in
+        guard let self, let target else { return }
+        self.finalizeSplitLayout(
+          target: target, location: location, vertical: vertical, attempt: attempt + 1)
+      }
+    }
+  }
+
+  private func closeActiveSplit() {
+    guard let secondary = secondaryPane else {
+      returnToHome()
+      return
+    }
+
+    hidePreview()
+    if !commandPalette.isHidden { commandPalette.dismiss() }
+    if !marksView.isHidden { marksView.dismiss() }
+
+    let pendingCapture = currentMarkCaptureMode()
+    let closingPrimary = activePane === primaryPane
+    if closingPrimary, let descriptor,
+      let location = secondary.pdfView.currentJumpLocation(descriptor: descriptor)
+    {
+      primaryPane.pdfView.document = secondary.pdfView.document
+      primaryPane.pdfView.autoScales = secondary.pdfView.autoScales
+      primaryPane.pdfView.restore(location)
+      primaryPane.markOverlay.viewportDidChange()
+    }
+
+    if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
+      NotificationCenter.default.removeObserver(observer)
+    }
+    secondary.markOverlay.captureMode = .inactive
+    secondary.pdfView.document = nil
+    secondary.removeFromSuperview()
+    secondaryPane = nil
+    if pendingCapture != .inactive {
+      primaryPane.markOverlay.captureMode = pendingCapture
+      capturePane = primaryPane
+    } else {
+      capturePane = nil
+    }
+    activatePane(primaryPane)
+    refreshMarkCaptureStatus()
+  }
+
+  private enum SplitFocusDirection {
+    case left, right, up, down
+  }
+
+  private func focusSplit(direction: SplitFocusDirection) {
+    guard let secondary = secondaryPane else { return }
+    let target: ReaderPaneView
+    if splitView.isVertical {
+      switch direction {
+      case .left:
+        target = primaryPane
+      case .right:
+        target = secondary
+      case .up, .down:
+        target = activePane === primaryPane ? secondary : primaryPane
+      }
+    } else {
+      switch direction {
+      case .up:
+        target = primaryPane
+      case .down:
+        target = secondary
+      case .left, .right:
+        target = activePane === primaryPane ? secondary : primaryPane
+      }
+    }
+    activatePane(target)
+  }
+
   private func resolveURL(for anchor: MarkAnchor, completion: @escaping (URL) -> Void) {
     let url = URL(fileURLWithPath: anchor.documentPath)
     guard FileManager.default.fileExists(atPath: url.path) else {
@@ -597,10 +1031,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   }
 
   private func flashArrival(_ anchor: MarkAnchor) {
-    markOverlay.arrivalAnchorID = anchor.id
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-      if self?.markOverlay.arrivalAnchorID == anchor.id {
-        self?.markOverlay.arrivalAnchorID = nil
+    let overlay = markOverlay
+    overlay.arrivalAnchorID = anchor.id
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak overlay] in
+      if overlay?.arrivalAnchorID == anchor.id {
+        overlay?.arrivalAnchorID = nil
       }
     }
   }
@@ -618,8 +1053,24 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       showCommandPalette()
     case .showMarks:
       showMarks()
+    case .showHome:
+      returnToHome()
+    case .verticalSplit:
+      splitDocument(vertical: true)
+    case .horizontalSplit:
+      splitDocument(vertical: false)
+    case .closeSplit:
+      closeActiveSplit()
+    case .focusLeft:
+      focusSplit(direction: .left)
+    case .focusRight:
+      focusSplit(direction: .right)
+    case .focusUp:
+      focusSplit(direction: .up)
+    case .focusDown:
+      focusSplit(direction: .down)
     case .quit:
-      NSApp.terminate(nil)
+      returnToHome()
     case .cancelMark:
       cancelMarkCapture()
     case .jumpBackward:
@@ -709,14 +1160,17 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
 
   @objc private func openPressed(_ sender: Any?) { presentOpenPanel() }
   @objc private func zoomOutPressed(_ sender: Any?) {
-    pdfView.autoScales = false
-    pdfView.scaleFactor = max(pdfView.minScaleFactor, pdfView.scaleFactor - 0.15)
+    activatePane(activePane)
+    activePane.pdfView.execute(.zoomOut)
   }
   @objc private func zoomInPressed(_ sender: Any?) {
-    pdfView.autoScales = false
-    pdfView.scaleFactor = min(pdfView.maxScaleFactor, pdfView.scaleFactor + 0.15)
+    activatePane(activePane)
+    activePane.pdfView.execute(.zoomIn)
   }
-  @objc private func fitPressed(_ sender: Any?) { pdfView.autoScales = true }
+  @objc private func fitPressed(_ sender: Any?) {
+    activatePane(activePane)
+    activePane.pdfView.execute(.fitWidth)
+  }
   @objc private func helpPressed(_ sender: Any?) { showShortcutHelp() }
 
   private func showShortcutHelp() {
@@ -729,7 +1183,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       + −     Zoom             0  Fit width
       ⌘F      Search           m  Create box mark
       ⌃O / ⌃I Back / forward jump     Esc  Cancel mark
+      ⌃Hover  Preview mark     ⌃Click  Follow mark
       :       Fuzzy commands   :marks  List marks
+      :vsplit Side-by-side PDF :hsplit Top/bottom PDF
+      :home   Recent PDFs home     :q / :qa  Close view / go home
+      ⌃h ⌃j ⌃k ⌃l  Focus left/down/up/right split
       """
     alert.addButton(withTitle: "Done")
     alert.runModal()
