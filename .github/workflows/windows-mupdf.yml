@@ -1,0 +1,44 @@
+name: Windows MuPDF build
+
+on:
+  push:
+    branches: [main, cursor/windows-mupdf-port]
+    paths:
+      - "native/**"
+      - ".github/workflows/windows-mupdf.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/windows-mupdf.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows release exe
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+
+      - name: Build release
+        working-directory: native
+        run: cargo build --release
+
+      - name: Upload Lattice.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lattice-windows-x64
+          path: native/target/release/lattice-native.exe
+          if-no-files-found: error
+          retention-days: 14

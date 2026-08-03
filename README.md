@@ -48,6 +48,77 @@ open macos/Lattice/build/Lattice.app
 The generated `Info.plist` registers Lattice as an alternate PDF viewer. Signing, notarization, and
 distribution are deferred.
 
+## Cross-platform MuPDF reader (Windows / macOS / Linux)
+
+`native/` is a Rust + egui + MuPDF port aimed at near feature parity with the macOS app. It uses the
+OS wheel/trackpad scroll input (no custom smooth-scrolling), and prioritizes the marks UI.
+
+### Requirements
+
+- Rust toolchain (stable)
+- On Windows: [MSVC Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (C++ workload)
+- Bun is optional; you can call Cargo directly
+
+### Run
+
+```sh
+bun run native:mupdf -- /absolute/path/to/document.pdf
+# or
+cargo run --manifest-path native/Cargo.toml -- /absolute/path/to/document.pdf
+```
+
+```sh
+bun run native:mupdf:build
+bun run native:mupdf:test
+```
+
+### MuPDF keybind differences
+
+| Shortcut | Action |
+| -------- | ------ |
+| `o`, Open button | Open a PDF (no Cmd/Ctrl+O open binding) |
+| `Ctrl+F` | Toolbar search field |
+| `/`, `?` | Vim-style search prompt |
+| `Ctrl+O` / `Ctrl+I` | Jump backward / forward (unchanged) |
+
+Marks, Vim navigation, `:commands`, splits, and jump list match the macOS table below.
+
+### Persistence
+
+Marks and reading state use the same JSON schemas as macOS. Paths:
+
+- Windows: `%APPDATA%\Lattice\`
+- macOS: `~/Library/Application Support/Lattice/` (via the platform data directory)
+- Linux: `$XDG_DATA_HOME/Lattice/` (usually `~/.local/share/Lattice/`)
+
+Files: `marks-v1.json`, `reading-state-v1.json`, `recents-v1.json`.
+
+### Sharing a Windows `.exe` (no compile for your friend)
+
+You are on macOS, so build the Windows binary in CI instead of locally:
+
+1. Push this branch (or merge to `main`).
+2. Open the GitHub Actions run **Windows MuPDF build**.
+3. Download the **Lattice-windows-x64** artifact — it contains `lattice-native.exe`.
+4. Send that `.exe` to your friend (zip is fine). They can double-click it; no Rust install needed.
+
+You can also trigger a build manually: **Actions → Windows MuPDF build → Run workflow**.
+
+First launch may need Windows Defender / SmartScreen “More info → Run anyway” because the binary is unsigned. If MSVC runtime DLLs are missing on a very old machine, install [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+
+### Manual QA checklist (Windows)
+
+- [ ] Open PDF via Open button, `o`, drag-and-drop, and CLI path
+- [ ] Wheel scroll and pinch/ctrl-zoom; `j/k`, `Ctrl+d/u`, `gg`/`G`, fit (`0`)
+- [ ] Password prompt unlocks protected PDFs
+- [ ] Marks: `m` drag source → drag dest; Ctrl-hover preview; Ctrl-click teleport; right-click delete; `:marks`
+- [ ] Cross-document mark + locate-on-mismatch path recovery
+- [ ] `Ctrl+F` toolbar search and `/` Vim search; `n`/`N` matches
+- [ ] `:vsplit` / `:hsplit`, `Ctrl+hjkl`, `:q` / `:qa`
+- [ ] Jump list `Ctrl+O` / `Ctrl+I` across PDF and home
+- [ ] Reading position restores after relaunch; recents home lists files
+- [ ] In-PDF go-to links navigate
+
 ## Keyboard shortcuts
 
 | Shortcut           | Action                         |
@@ -64,7 +135,7 @@ distribution are deferred.
 | `n`, `N`           | Next or previous search match  |
 | `Cmd+F`            | Focus the toolbar search field |
 | `m`                | Start rectangle mark capture   |
-| `Ctrl+click`       | Follow a mark or bookmark badge |
+| `Ctrl+click`       | Follow a mark (source or destination) |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
 | `Escape`           | Cancel mark capture or clear search |
 | `:`                | Fuzzy-find reader commands     |
@@ -79,8 +150,8 @@ distribution are deferred.
 To create a mark, press `m` and drag a source rectangle. Navigate anywhere—including `:q` / `:home`
 to the recents screen, or opening another PDF—and drag the destination rectangle. Hold Control while
 hovering the source to preview its destination, then Control-click to teleport. Right-click the source
-to delete the mark. At the destination, hold Control over its compact bookmark badge to preview the
-source; Control-clicking the badge returns to the source. Run `:marks` to list every mark source in the
+to delete the mark. At the destination, hold Control over its fainter rectangle to preview the
+source; Control-clicking that rectangle returns to the source. Run `:marks` to list every mark source in the
 current PDF; use `Ctrl+N` and `Ctrl+P` to move through command and mark lists.
 
 Run `:vsplit` (or `:vs`) to duplicate the active PDF into side-by-side panes. Run `:hsplit`
@@ -112,6 +183,8 @@ directory.
 
 ## Architecture
 
+### macOS (PDFKit)
+
 - `macos/Lattice/Sources/Lattice/LatticeWindowController.swift` owns the AppKit window, `PDFView`, native
   toolbar, document lifecycle, and mark capture.
 - `macos/Lattice/Sources/Lattice/LatticePDFView.swift` adds drag-and-drop and Vim event routing without
@@ -123,6 +196,13 @@ directory.
 - `macos/Lattice/Sources/Lattice/MarkPreviewRenderer.swift` renders destination crops on a serial
   background queue and caches them by document, geometry, scale, and appearance.
 - `macos/Lattice/Resources/Info.plist` contains the macOS bundle and PDF association metadata.
+
+### MuPDF (`native/`)
+
+- `native/src/engine.rs` — MuPDF document thread, tile rasterization, search, links, crops, passwords
+- `native/src/core/` — Rust port of LatticeCore (marks, jumps, shortcuts, commands, recents, reading state)
+- `native/src/app.rs` — egui shell: viewer, marks overlay, palette, dual search, splits, home
+- `native/src/persist.rs` — platform data directory and SHA-256 fingerprints
 
 ## Roadmap
 

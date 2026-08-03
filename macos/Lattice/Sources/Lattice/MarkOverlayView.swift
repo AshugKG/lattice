@@ -217,7 +217,9 @@ final class MarkOverlayView: NSView {
 
     for mark in marks {
       if mark.destination.documentFingerprint == documentFingerprint {
-        drawDestinationMarker(for: mark)
+        drawDestination(
+          mark.destination,
+          hovered: mark.id == hoveredMarkID && hoveredEndpoint == .destination)
       }
       if mark.source.documentFingerprint == documentFingerprint {
         drawSource(
@@ -249,34 +251,16 @@ final class MarkOverlayView: NSView {
     path.stroke()
   }
 
-  private func drawDestinationMarker(for mark: Mark) {
-    guard let markerRect = destinationMarkerRect(for: mark) else { return }
-    let pageNumber = "\(mark.source.pageIndex + 1)"
-    let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-    let textSize = (pageNumber as NSString).size(withAttributes: [.font: font])
-    let isArrival = mark.destination.id == arrivalAnchorID
-    let isHovered = mark.id == hoveredMarkID && hoveredEndpoint == .destination
-    let color = isArrival || isHovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
-    color.withAlphaComponent(isArrival ? 0.95 : (isHovered ? 0.88 : 0.78)).setFill()
-    let markerPath = NSBezierPath(roundedRect: markerRect, xRadius: 6, yRadius: 6)
-    markerPath.fill()
-
-    if let icon = NSImage(systemSymbolName: "bookmark.fill", accessibilityDescription: nil) {
-      icon.withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))?.draw(
-        in: NSRect(x: markerRect.minX + 6, y: markerRect.midY - 5, width: 10, height: 10))
-    }
-    let textRect = NSRect(
-      x: markerRect.minX + 19,
-      y: markerRect.midY - textSize.height / 2,
-      width: textSize.width,
-      height: textSize.height
-    )
-    (pageNumber as NSString).draw(
-      in: textRect,
-      withAttributes: [
-        .font: font,
-        .foregroundColor: NSColor.white,
-      ])
+  private func drawDestination(_ anchor: MarkAnchor, hovered: Bool) {
+    guard let rect = overlayRect(for: anchor) else { return }
+    let isArrival = anchor.id == arrivalAnchorID
+    let color = NSColor.controlAccentColor
+    color.withAlphaComponent(isArrival ? 0.16 : (hovered ? 0.1 : 0.04)).setFill()
+    color.withAlphaComponent(isArrival ? 0.65 : (hovered ? 0.55 : 0.45)).setStroke()
+    let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+    path.lineWidth = isArrival ? 2 : 1.5
+    path.fill()
+    path.stroke()
   }
 
   private func sourceRect(for mark: Mark) -> NSRect? {
@@ -284,27 +268,13 @@ final class MarkOverlayView: NSView {
     return overlayRect(for: mark.source)
   }
 
-  private func destinationMarkerRect(for mark: Mark) -> NSRect? {
-    guard mark.destination.documentFingerprint == documentFingerprint,
-      let destinationRect = overlayRect(for: mark.destination),
-      let pdfView,
-      let page = pdfView.document?.page(at: mark.destination.pageIndex)
-    else { return nil }
-    let pageRect = overlayRect(for: page)
-    let pageNumber = "\(mark.source.pageIndex + 1)"
-    let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-    let textSize = (pageNumber as NSString).size(withAttributes: [.font: font])
-    let markerSize = NSSize(width: max(34, textSize.width + 23), height: 20)
-    return NSRect(
-      x: pageRect.maxX - markerSize.width - 7,
-      y: destinationRect.midY - markerSize.height / 2,
-      width: markerSize.width,
-      height: markerSize.height
-    )
+  private func destinationRect(for mark: Mark) -> NSRect? {
+    guard mark.destination.documentFingerprint == documentFingerprint else { return nil }
+    return overlayRect(for: mark.destination)
   }
 
   private func interactionRect(for mark: Mark, endpoint: MarkEndpoint) -> NSRect? {
-    endpoint == .source ? sourceRect(for: mark) : destinationMarkerRect(for: mark)
+    endpoint == .source ? sourceRect(for: mark) : destinationRect(for: mark)
   }
 
   private func rebuildInteractionViews() {
@@ -351,7 +321,7 @@ final class MarkOverlayView: NSView {
         view.isHidden = true
         continue
       }
-      let padding: CGFloat = key.endpoint == .source ? 7 : 5
+      let padding: CGFloat = 7
       let hitRect = rect.insetBy(dx: -padding, dy: -padding).intersection(bounds)
       view.frame = hitRect
       view.isHidden = hitRect.isEmpty
