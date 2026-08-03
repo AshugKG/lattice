@@ -492,14 +492,22 @@ enum OpenResult {
     Failed(String),
 }
 
+/// MuPDF on Windows only accepts UTF-8 paths (`str` / `FilePath`), not bare `Path`.
+fn open_pdf(path: &Path) -> Result<Document, String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| "PDF path must be valid UTF-8".to_owned())?;
+    Document::open(path).map_err(|error| format!("Could not open PDF: {error}"))
+}
+
 fn try_open_document(path: &Path, password: Option<&str>) -> OpenResult {
     let fingerprint = match crate::persist::fingerprint_file(path) {
         Ok(value) => value,
         Err(error) => return OpenResult::Failed(error),
     };
-    let mut document = match Document::open(path) {
+    let mut document = match open_pdf(path) {
         Ok(document) => document,
-        Err(error) => return OpenResult::Failed(format!("Could not open PDF: {error}")),
+        Err(error) => return OpenResult::Failed(error),
     };
     if !document.is_pdf() {
         return OpenResult::Failed("The selected file is not a PDF".into());
@@ -625,7 +633,7 @@ fn text_under_rect(document: &Document, page_index: usize, rect: Rect) -> Result
 fn render_thumbnail(path: &Path) -> Result<CropImage, String> {
     const MAX_WIDTH: f32 = 160.0;
     const MAX_HEIGHT: f32 = 220.0;
-    let document = Document::open(path).map_err(|e| format!("thumbnail open: {e}"))?;
+    let document = open_pdf(path).map_err(|e| format!("thumbnail open: {e}"))?;
     if document
         .needs_password()
         .map_err(|e| format!("thumbnail inspect: {e}"))?

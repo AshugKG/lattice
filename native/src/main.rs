@@ -6,6 +6,7 @@ mod persist;
 
 fn main() -> eframe::Result {
     let initial_path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    #[allow(unused_mut)]
     let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Lattice")
