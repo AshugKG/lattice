@@ -29,6 +29,9 @@ const DOCUMENT_MARGIN: f32 = 32.0;
 const MAX_CACHED_TILES: usize = 192;
 const MIN_MARK_SIZE: f32 = 8.0;
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
+const HOME_CARD_WIDTH: f32 = 168.0;
+const HOME_CARD_HEIGHT: f32 = 248.0;
+const HOME_THUMB_SIZE: Vec2 = Vec2::new(148.0, 200.0);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MarkCaptureMode {
@@ -242,9 +245,12 @@ pub struct LatticeApp {
     pending_preview: Option<PendingPreview>,
     preview: Option<PreviewState>,
     preview_request_id: u64,
+    preview_anchor: Option<Rect>,
     jump_list: JumpList,
     reading_positions: HashMap<String, ReadingPosition>,
     recents: Vec<RecentDocument>,
+    thumbnails: HashMap<String, TextureHandle>,
+    pending_thumbnails: HashSet<String>,
     show_home: bool,
     show_help: bool,
     show_marks_list: bool,
@@ -294,9 +300,12 @@ impl LatticeApp {
             pending_preview: None,
             preview: None,
             preview_request_id: 0,
+            preview_anchor: None,
             jump_list: JumpList::new(100),
             reading_positions,
             recents,
+            thumbnails: HashMap::new(),
+            pending_thumbnails: HashSet::new(),
             show_home: initial_path.is_none(),
             show_help: false,
             show_marks_list: false,
@@ -585,6 +594,16 @@ impl LatticeApp {
                             preview.texture = Some(texture);
                         }
                     }
+                }
+                EngineEvent::ThumbnailReady { fingerprint, image } => {
+                    self.pending_thumbnails.remove(&fingerprint);
+                    let color = ColorImage::from_rgb([image.width, image.height], &image.rgb);
+                    let texture = ctx.load_texture(
+                        format!("thumb-{fingerprint}"),
+                        color,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.thumbnails.insert(fingerprint, texture);
                 }
                 EngineEvent::Failed(message) => {
                     self.loading = false;
@@ -1235,9 +1254,11 @@ impl LatticeApp {
         if pane.tiles.len() <= MAX_CACHED_TILES {
             return;
         }
+        // Prefer keeping tiles touched this frame (including LOD cover tiles).
         let mut oldest: Vec<_> = pane
             .tiles
             .iter()
+            .filter(|(_, tile)| tile.last_used_frame != frame_index)
             .map(|(key, tile)| (*key, tile.last_used_frame))
             .collect();
         oldest.sort_unstable_by_key(|(_, frame)| *frame);
@@ -1245,7 +1266,6 @@ impl LatticeApp {
         for (key, _) in oldest.into_iter().take(remove_count) {
             pane.tiles.remove(&key);
         }
-        let _ = frame_index;
     }
 }
 
@@ -1259,6 +1279,39 @@ fn key_name(key: Key) -> String {
         Key::CloseBracket => "]".into(),
         other => format!("{other:?}"),
     }
+}
+
+/// Find a nearby cached LOD tile that covers `target_page_rect` while the desired LOD loads.
+fn find_cover_tile(
+    tiles: &HashMap<TileKey, CachedTile>,
+    generation: u64,
+    page: usize,
+    target_page_rect: Rect,
+    target_lod: i16,
+) -> Option<(TileKey, f32)> {
+    let mut best: Option<(TileKey, f32, i16)> = None;
+    for key in tiles.keys() {
+        if key.generation != generation || key.page != page {
+            continue;
+        }
+        let cover_scale = crate::engine::quantized_raster_scale_from_lod(key.lod);
+        let cover_rect = key.page_rect(cover_scale);
+        if !cover_rect.intersects(target_page_rect) {
+            continue;
+        }
+        let distance = (key.lod - target_lod).abs();
+        let replace = match best {
+            None => true,
+            Some((_, _, best_distance)) => {
+                distance < best_distance
+                    || (distance == best_distance && key.lod < target_lod)
+            }
+        };
+        if replace {
+            best = Some((*key, cover_scale, distance));
+        }
+    }
+    best.map(|(key, scale, _)| (key, scale))
 }
 
 impl eframe::App for LatticeApp {
@@ -1357,35 +1410,91 @@ impl LatticeApp {
     }
 
     fn show_home_screen(&mut self, root: &mut egui::Ui) {
+        let recents = self.recents.clone();
+        for recent in &recents {
+            if !self.thumbnails.contains_key(&recent.fingerprint)
+                && self.pending_thumbnails.insert(recent.fingerprint.clone())
+            {
+                self.engine.request_thumbnail(
+                    PathBuf::from(&recent.path),
+                    recent.fingerprint.clone(),
+                );
+            }
+        }
+
         egui::CentralPanel::default().show(root, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(48.0);
+                ui.add_space(28.0);
                 ui.heading("Lattice");
                 ui.label("Recent PDFs");
-                ui.add_space(16.0);
+                ui.add_space(12.0);
             });
-            if self.recents.is_empty() {
+            if recents.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.label("No recent documents — press o or Open");
                 });
+                return;
             }
+
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let recents = self.recents.clone();
-                for recent in recents {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 36.0],
-                                egui::Button::new(format!(
-                                    "{}  ·  {} pages",
-                                    recent.name, recent.page_count
-                                )),
-                            )
-                            .clicked()
-                        {
-                            self.open_path(PathBuf::from(recent.path), true);
+                let mut open_path: Option<PathBuf> = None;
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(16.0, 16.0);
+                    for recent in &recents {
+                        let thumb = self.thumbnails.get(&recent.fingerprint).cloned();
+                        let response = egui::Frame::group(ui.style())
+                            .inner_margin(10.0)
+                            .show(ui, |ui| {
+                                ui.set_width(HOME_CARD_WIDTH - 20.0);
+                                ui.set_min_height(HOME_CARD_HEIGHT - 20.0);
+                                ui.vertical_centered(|ui| {
+                                    let (thumb_rect, _) =
+                                        ui.allocate_exact_size(HOME_THUMB_SIZE, Sense::hover());
+                                    ui.painter().rect_filled(
+                                        thumb_rect,
+                                        4.0,
+                                        Color32::from_gray(245),
+                                    );
+                                    if let Some(texture) = &thumb {
+                                        let size = texture.size_vec2();
+                                        let scale = (HOME_THUMB_SIZE.x / size.x)
+                                            .min(HOME_THUMB_SIZE.y / size.y);
+                                        let image_rect = Rect::from_center_size(
+                                            thumb_rect.center(),
+                                            size * scale,
+                                        );
+                                        ui.painter().image(
+                                            texture.id(),
+                                            image_rect,
+                                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                            Color32::WHITE,
+                                        );
+                                    } else {
+                                        ui.painter().text(
+                                            thumb_rect.center(),
+                                            Align2::CENTER_CENTER,
+                                            "…",
+                                            FontId::proportional(18.0),
+                                            Color32::from_gray(140),
+                                        );
+                                    }
+                                    ui.add_space(8.0);
+                                    ui.label(egui::RichText::new(&recent.name).strong());
+                                    ui.label(format!("{} pages", recent.page_count));
+                                });
+                            })
+                            .response
+                            .interact(Sense::click());
+                        if response.clicked() {
+                            open_path = Some(PathBuf::from(&recent.path));
                         }
-                    });
+                        if response.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                    }
+                });
+                if let Some(path) = open_path {
+                    self.open_path(path, true);
                 }
             });
         });
@@ -1551,12 +1660,36 @@ impl LatticeApp {
                         Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                         Color32::WHITE,
                     );
-                } else if self.panes[pane_index].pending_tiles.insert(key) {
-                    self.engine.request_tile(TileRequest {
-                        key,
-                        raster_scale,
-                        display_list: display_list.clone(),
-                    });
+                } else {
+                    if let Some((cover_key, cover_scale)) = find_cover_tile(
+                        &self.panes[pane_index].tiles,
+                        generation,
+                        page_index,
+                        tile_page_rect,
+                        lod,
+                    ) {
+                        let cover_page_rect = cover_key.page_rect(cover_scale);
+                        let cover_doc = cover_page_rect.translate(page_rect.min.to_vec2());
+                        let cover_screen = self.panes[pane_index]
+                            .camera
+                            .document_to_screen_rect(cover_doc, viewport);
+                        if let Some(tile) = self.panes[pane_index].tiles.get_mut(&cover_key) {
+                            tile.last_used_frame = self.frame_index;
+                            painter.image(
+                                tile.texture.id(),
+                                cover_screen,
+                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                Color32::WHITE,
+                            );
+                        }
+                    }
+                    if self.panes[pane_index].pending_tiles.insert(key) {
+                        self.engine.request_tile(TileRequest {
+                            key,
+                            raster_scale,
+                            display_list: display_list.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -1647,30 +1780,29 @@ impl LatticeApp {
                     .document_to_screen_rect(doc_rect, viewport);
                 match endpoint {
                     MarkEndpoint::Source => {
+                        painter.rect_filled(
+                            screen,
+                            2.0,
+                            Color32::from_rgba_unmultiplied(40, 120, 255, 28),
+                        );
                         painter.rect_stroke(
                             screen,
                             2.0,
                             Stroke::new(2.0, Color32::from_rgb(40, 120, 255)),
                             egui::StrokeKind::Outside,
                         );
+                    }
+                    MarkEndpoint::Destination => {
                         painter.rect_filled(
                             screen,
                             2.0,
-                            Color32::from_rgba_unmultiplied(40, 120, 255, 28),
+                            Color32::from_rgba_unmultiplied(40, 120, 255, 14),
                         );
-                    }
-                    MarkEndpoint::Destination => {
-                        let badge = Rect::from_center_size(
-                            screen.center(),
-                            Vec2::new(28.0, 18.0),
-                        );
-                        painter.rect_filled(badge, 4.0, Color32::from_rgb(40, 120, 255));
-                        painter.text(
-                            badge.center(),
-                            Align2::CENTER_CENTER,
-                            format!("{}", mark.source.page_index + 1),
-                            FontId::proportional(11.0),
-                            Color32::WHITE,
+                        painter.rect_stroke(
+                            screen,
+                            2.0,
+                            Stroke::new(1.5, Color32::from_rgba_unmultiplied(40, 120, 255, 110)),
+                            egui::StrokeKind::Outside,
                         );
                     }
                 }
@@ -1748,6 +1880,7 @@ impl LatticeApp {
             if !control {
                 self.pending_preview = None;
                 self.preview = None;
+                self.preview_anchor = None;
             }
             return;
         };
@@ -1755,7 +1888,7 @@ impl LatticeApp {
 
         if response.secondary_clicked()
             && !control
-            && let Some((mark_id, MarkEndpoint::Source)) = hit
+            && let Some((mark_id, MarkEndpoint::Source, _)) = hit
         {
             self.delete_mark(mark_id);
             return;
@@ -1764,14 +1897,17 @@ impl LatticeApp {
         if !control {
             self.pending_preview = None;
             self.preview = None;
+            self.preview_anchor = None;
             return;
         }
 
         let Some(hit) = hit else {
             self.pending_preview = None;
+            self.preview_anchor = None;
             return;
         };
 
+        self.preview_anchor = Some(hit.2);
         let needs_new = self
             .pending_preview
             .as_ref()
@@ -1806,7 +1942,7 @@ impl LatticeApp {
         pane_index: usize,
         screen_pos: Pos2,
         viewport: Rect,
-    ) -> Option<(Uuid, MarkEndpoint)> {
+    ) -> Option<(Uuid, MarkEndpoint, Rect)> {
         let document = self.panes[pane_index].document.as_ref()?;
         let fingerprint = &document.fingerprint;
         for mark in self.marks_for_document(fingerprint) {
@@ -1827,14 +1963,11 @@ impl LatticeApp {
                 )?;
                 let doc_rect =
                     Rect::from_min_size(Pos2::new(page[0], page[1]), Vec2::new(page[2], page[3]));
-                let mut screen = self.panes[pane_index]
+                let screen = self.panes[pane_index]
                     .camera
                     .document_to_screen_rect(doc_rect, viewport);
-                if endpoint == MarkEndpoint::Destination {
-                    screen = Rect::from_center_size(screen.center(), Vec2::new(28.0, 18.0));
-                }
                 if screen.contains(screen_pos) {
-                    return Some((mark.id, endpoint));
+                    return Some((mark.id, endpoint, screen));
                 }
             }
         }
@@ -1983,13 +2116,25 @@ impl LatticeApp {
         if let Some(preview) = &self.preview
             && let Some(texture) = &preview.texture
         {
+            let preview_size = texture.size_vec2() * 0.5;
+            let screen = root.ctx().content_rect();
+            let anchor = self.preview_anchor.unwrap_or_else(|| {
+                Rect::from_center_size(screen.center(), Vec2::splat(1.0))
+            });
+            let mut pos = Pos2::new(anchor.max.x + 12.0, anchor.center().y - preview_size.y * 0.5);
+            if pos.x + preview_size.x + 12.0 > screen.max.x {
+                pos.x = anchor.min.x - preview_size.x - 12.0;
+            }
+            pos.y = pos.y.clamp(screen.min.y + 12.0, screen.max.y - preview_size.y - 12.0);
+            pos.x = pos.x.clamp(screen.min.x + 12.0, screen.max.x - preview_size.x - 12.0);
             egui::Area::new(egui::Id::new("mark_preview"))
-                .anchor(Align2::RIGHT_TOP, [-24.0, 72.0])
+                .fixed_pos(pos)
+                .order(egui::Order::Foreground)
                 .show(root.ctx(), |ui| {
                     egui::Frame::popup(ui.style())
                         .corner_radius(CornerRadius::same(6))
                         .show(ui, |ui| {
-                            ui.image((texture.id(), texture.size_vec2() * 0.5));
+                            ui.image((texture.id(), preview_size));
                         });
                 });
         }

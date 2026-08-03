@@ -93,6 +93,19 @@ Marks and reading state use the same JSON schemas as macOS. Paths:
 
 Files: `marks-v1.json`, `reading-state-v1.json`, `recents-v1.json`.
 
+### Sharing a Windows `.exe` (no compile for your friend)
+
+You are on macOS, so build the Windows binary in CI instead of locally:
+
+1. Push this branch (or merge to `main`).
+2. Open the GitHub Actions run **Windows MuPDF build**.
+3. Download the **Lattice-windows-x64** artifact — it contains `lattice-native.exe`.
+4. Send that `.exe` to your friend (zip is fine). They can double-click it; no Rust install needed.
+
+You can also trigger a build manually: **Actions → Windows MuPDF build → Run workflow**.
+
+First launch may need Windows Defender / SmartScreen “More info → Run anyway” because the binary is unsigned. If MSVC runtime DLLs are missing on a very old machine, install [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+
 ### Manual QA checklist (Windows)
 
 - [ ] Open PDF via Open button, `o`, drag-and-drop, and CLI path
@@ -122,7 +135,7 @@ Files: `marks-v1.json`, `reading-state-v1.json`, `recents-v1.json`.
 | `n`, `N`           | Next or previous search match  |
 | `Cmd+F`            | Focus the toolbar search field |
 | `m`                | Start rectangle mark capture   |
-| `Ctrl+click`       | Follow a mark or bookmark badge |
+| `Ctrl+click`       | Follow a mark (source or destination) |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
 | `Escape`           | Cancel mark capture or clear search |
 | `:`                | Fuzzy-find reader commands     |
@@ -137,8 +150,8 @@ Files: `marks-v1.json`, `reading-state-v1.json`, `recents-v1.json`.
 To create a mark, press `m` and drag a source rectangle. Navigate anywhere—including `:q` / `:home`
 to the recents screen, or opening another PDF—and drag the destination rectangle. Hold Control while
 hovering the source to preview its destination, then Control-click to teleport. Right-click the source
-to delete the mark. At the destination, hold Control over its compact bookmark badge to preview the
-source; Control-clicking the badge returns to the source. Run `:marks` to list every mark source in the
+to delete the mark. At the destination, hold Control over its fainter rectangle to preview the
+source; Control-clicking that rectangle returns to the source. Run `:marks` to list every mark source in the
 current PDF; use `Ctrl+N` and `Ctrl+P` to move through command and mark lists.
 
 Run `:vsplit` (or `:vs`) to duplicate the active PDF into side-by-side panes. Run `:hsplit`

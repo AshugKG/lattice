@@ -128,6 +128,10 @@ pub enum EngineEvent {
         image: CropImage,
         request_id: u64,
     },
+    ThumbnailReady {
+        fingerprint: String,
+        image: CropImage,
+    },
     Failed(String),
 }
 
@@ -160,6 +164,10 @@ enum DocumentCommand {
         rect: Rect,
         scale: f32,
         request_id: u64,
+    },
+    Thumbnail {
+        path: PathBuf,
+        fingerprint: String,
     },
 }
 
@@ -251,6 +259,12 @@ impl Engine {
             scale,
             request_id,
         });
+    }
+
+    pub fn request_thumbnail(&self, path: PathBuf, fingerprint: String) {
+        let _ = self
+            .document_tx
+            .send(DocumentCommand::Thumbnail { path, fingerprint });
     }
 
     pub fn try_recv(&self) -> Option<EngineEvent> {
@@ -451,6 +465,19 @@ fn spawn_document_thread(
                             }
                         }
                     }
+                    DocumentCommand::Thumbnail { path, fingerprint } => {
+                        match render_thumbnail(&path) {
+                            Ok(image) => {
+                                let _ = events.send(EngineEvent::ThumbnailReady {
+                                    fingerprint,
+                                    image,
+                                });
+                            }
+                            Err(_) => {
+                                // Quiet failure — home can show a placeholder card.
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 context.request_repaint();
@@ -595,6 +622,32 @@ fn text_under_rect(document: &Document, page_index: usize, rect: Rect) -> Result
     Ok(parts.join(" "))
 }
 
+fn render_thumbnail(path: &Path) -> Result<CropImage, String> {
+    const MAX_WIDTH: f32 = 160.0;
+    const MAX_HEIGHT: f32 = 220.0;
+    let document = Document::open(path).map_err(|e| format!("thumbnail open: {e}"))?;
+    if document
+        .needs_password()
+        .map_err(|e| format!("thumbnail inspect: {e}"))?
+    {
+        return Err("password protected".into());
+    }
+    let page = document
+        .load_page(0)
+        .map_err(|e| format!("thumbnail page: {e}"))?;
+    let bounds = page.bounds().map_err(|e| format!("thumbnail bounds: {e}"))?;
+    let width = bounds.width().max(1.0);
+    let height = bounds.height().max(1.0);
+    let scale = (MAX_WIDTH / width).min(MAX_HEIGHT / height).clamp(0.05, 2.0);
+    let rect = Rect::from_min_size(
+        eframe::egui::pos2(bounds.x0, bounds.y0),
+        Vec2::new(width, height),
+    );
+    // Drop page before reusing document via render_crop's load_page.
+    drop(page);
+    render_crop(&document, 0, rect, scale)
+}
+
 fn render_crop(
     document: &Document,
     page_index: usize,
@@ -696,7 +749,11 @@ pub fn scale_to_lod(scale: f32) -> i16 {
 }
 
 pub fn quantized_raster_scale(scale: f32) -> f32 {
-    2.0_f32.powf(scale_to_lod(scale) as f32 / 4.0)
+    quantized_raster_scale_from_lod(scale_to_lod(scale))
+}
+
+pub fn quantized_raster_scale_from_lod(lod: i16) -> f32 {
+    2.0_f32.powf(lod as f32 / 4.0)
 }
 
 pub fn visible_tiles(
