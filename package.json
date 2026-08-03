@@ -12,6 +12,9 @@
     "native:build": "swift build --package-path macos/Lattice",
     "native:test": "swift test --package-path macos/Lattice",
     "native:bundle": "sh macos/Lattice/scripts/build-app.sh",
+    "native:mupdf": "cargo run --manifest-path native/Cargo.toml --",
+    "native:mupdf:build": "cargo build --manifest-path native/Cargo.toml",
+    "native:mupdf:test": "cargo test --manifest-path native/Cargo.toml",
     "format": "xcrun swift-format format --in-place --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift",
     "format:check": "xcrun swift-format lint --strict --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift",
     "check": "bun run format:check && bun run native:test && bun run native:build"

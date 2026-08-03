@@ -1,5 +1,5 @@
-# Native macOS builds
-/native/
+# Build artifacts
+native/target/
 node_modules/
 macos/**/.build/
 macos/**/.cache/
