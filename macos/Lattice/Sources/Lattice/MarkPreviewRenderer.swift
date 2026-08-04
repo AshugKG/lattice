@@ -57,48 +57,55 @@ final class MarkPreviewRenderer: @unchecked Sendable {
     }
 
     let pageBox = page.bounds(for: .cropBox)
-    guard let snippet = MarkGeometry.pageRect(for: anchor.bounds, in: pageBox) else {
+    guard let snippet = MarkGeometry.pageRect(for: anchor.bounds, in: pageBox), !snippet.isEmpty
+    else {
       return .unavailable("Destination box is invalid")
     }
 
     let backingScale = max(1, CGFloat(key.backingScale) / 100)
     let maximumPixels = CGSize(width: 480 * backingScale, height: 320 * backingScale)
     let imageScale = min(maximumPixels.width / snippet.width, maximumPixels.height / snippet.height)
-    let pixelWidth = max(1, Int((snippet.width * imageScale).rounded(.up)))
-    let pixelHeight = max(1, Int((snippet.height * imageScale).rounded(.up)))
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    guard
-      let context = CGContext(
-        data: nil,
-        width: pixelWidth,
-        height: pixelHeight,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-      )
+    // `PDFPage.draw(with:to:)` remaps the full box into the context (ignoring a
+    // crop CTM) and is unreliable in raw bitmap contexts. Thumbnail the page,
+    // then crop in upright image space.
+    let maxPageDimension: CGFloat = 4096
+    let pageRenderScale = min(
+      imageScale,
+      maxPageDimension / max(pageBox.width, pageBox.height, 1)
+    )
+    let thumbSize = NSSize(
+      width: max(1, pageBox.width * pageRenderScale),
+      height: max(1, pageBox.height * pageRenderScale)
+    )
+    let thumbnail = page.thumbnail(of: thumbSize, for: .cropBox)
+    var proposed = NSRect(origin: .zero, size: thumbnail.size)
+    guard let pageImage = thumbnail.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
     else {
       return .unavailable("Preview could not be rendered")
     }
 
-    let dark = key.appearance == "dark"
-    context.setFillColor(
-      dark
-        ? CGColor(gray: 0.10, alpha: 1)
-        : CGColor(gray: 1, alpha: 1)
+    let scaleX = CGFloat(pageImage.width) / pageBox.width
+    let scaleY = CGFloat(pageImage.height) / pageBox.height
+    let cropInImage = CGRect(
+      x: (snippet.minX - pageBox.minX) * scaleX,
+      y: (pageBox.maxY - snippet.maxY) * scaleY,
+      width: snippet.width * scaleX,
+      height: snippet.height * scaleY
+    ).integral.intersection(
+      CGRect(x: 0, y: 0, width: pageImage.width, height: pageImage.height)
     )
-    context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
-    context.scaleBy(x: imageScale, y: imageScale)
-    context.translateBy(x: -snippet.minX, y: -snippet.minY)
-    page.draw(with: .cropBox, to: context)
-    guard let cgImage = context.makeImage() else {
+    guard !cropInImage.isNull, !cropInImage.isEmpty,
+      let cgImage = pageImage.cropping(to: cropInImage)
+    else {
       return .unavailable("Preview could not be rendered")
     }
+
     return .image(
       NSImage(
         cgImage: cgImage,
         size: NSSize(
-          width: CGFloat(pixelWidth) / backingScale, height: CGFloat(pixelHeight) / backingScale)
+          width: CGFloat(cgImage.width) / backingScale,
+          height: CGFloat(cgImage.height) / backingScale)
       ))
   }
 
