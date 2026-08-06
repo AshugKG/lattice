@@ -9,13 +9,13 @@ private func anchor(
   path: String = "/tmp/document.pdf",
   page: Int = 1,
   x: Double = 0.1
-) -> MarkAnchor {
-  MarkAnchor(
+) -> PortalAnchor {
+  PortalAnchor(
     documentFingerprint: fingerprint,
     documentPath: path,
     pageIndex: page,
     bounds: NormalizedRect(x: x, y: 0.2, width: 0.3, height: 0.1),
-    quotedText: "mark snippet"
+    quotedText: "portal snippet"
   )
 }
 
@@ -54,9 +54,9 @@ private func location(
   )
   #expect(
     resolver.resolve(key: "\t", keyCode: 34, modifiers: .control, timestamp: 3) == .jumpForward)
-  #expect(resolver.resolve(key: "\u{1b}", keyCode: 53, timestamp: 3) == .cancelMark)
-  #expect(resolver.resolve(key: "m", timestamp: 3) == .captureMark)
-  #expect(resolver.resolve(key: "p", timestamp: 3) == nil)
+  #expect(resolver.resolve(key: "\u{1b}", keyCode: 53, timestamp: 3) == .cancelPortal)
+  #expect(resolver.resolve(key: "p", timestamp: 3) == .capturePortal)
+  #expect(resolver.resolve(key: "m", timestamp: 3) == nil)
   #expect(resolver.resolve(key: ":", timestamp: 4) == .showCommandPalette)
   #expect(resolver.resolve(key: "/", timestamp: 5) == .findForward)
   #expect(resolver.resolve(key: "?", timestamp: 5) == .findBackward)
@@ -65,22 +65,22 @@ private func location(
   #expect(resolver.resolve(key: "?", timestamp: 5) != .help)
 }
 
-@Test func markFileRoundTripsThroughJSON() throws {
-  let mark = Mark(source: anchor(), destination: anchor(fingerprint: "other", page: 8, x: 0.5))
+@Test func portalFileRoundTripsThroughJSON() throws {
+  let portal = Portal(source: anchor(), destination: anchor(fingerprint: "other", page: 8, x: 0.5))
   let encoder = JSONEncoder()
   encoder.dateEncodingStrategy = .secondsSince1970
-  let data = try encoder.encode(MarkFile(marks: [mark]))
+  let data = try encoder.encode(PortalFile(portals: [portal]))
   let decoder = JSONDecoder()
   decoder.dateDecodingStrategy = .secondsSince1970
-  #expect(try decoder.decode(MarkFile.self, from: data) == MarkFile(marks: [mark]))
+  #expect(try decoder.decode(PortalFile.self, from: data) == PortalFile(portals: [portal]))
 }
 
 @Test @MainActor func repositoryPersistsDeletesAndReplacesAtomically() throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: directory) }
-  let repository = MarkRepository(fileURL: directory.appendingPathComponent("marks.json"))
-  let first = Mark(source: anchor(), destination: anchor(page: 2))
-  let second = Mark(source: anchor(page: 3), destination: anchor(page: 4))
+  let repository = PortalRepository(fileURL: directory.appendingPathComponent("marks.json"))
+  let first = Portal(source: anchor(), destination: anchor(page: 2))
+  let second = Portal(source: anchor(page: 3), destination: anchor(page: 4))
   try repository.save([first, second])
   #expect(try repository.load() == [first, second])
   try repository.save([second])
@@ -93,8 +93,8 @@ private func location(
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
   let url = directory.appendingPathComponent("marks.json")
   try Data("not json".utf8).write(to: url)
-  let repository = MarkRepository(fileURL: url)
-  #expect(throws: MarkRepositoryError.corruptFile) { try repository.load() }
+  let repository = PortalRepository(fileURL: url)
+  #expect(throws: PortalRepositoryError.corruptFile) { try repository.load() }
   #expect(!FileManager.default.fileExists(atPath: url.path))
 }
 
@@ -102,22 +102,23 @@ private func location(
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: directory) }
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  let currentURL = directory.appendingPathComponent("marks-v1.json")
-  let legacyURL = directory.appendingPathComponent("legacy-v1.json")
-  let mark = Mark(source: anchor(), destination: anchor(page: 4))
+  let currentURL = directory.appendingPathComponent("portals-v1.json")
+  let legacyURL = directory.appendingPathComponent("marks-v1.json")
+  let portal = Portal(source: anchor(), destination: anchor(page: 4))
   let encoder = JSONEncoder()
   encoder.dateEncodingStrategy = .secondsSince1970
+  // Old on-disk payload used a "marks" array key.
   var object = try #require(
-    JSONSerialization.jsonObject(with: encoder.encode(MarkFile(marks: [mark])))
+    JSONSerialization.jsonObject(with: encoder.encode(PortalFile(portals: [portal])))
       as? [String: Any])
-  object["portals"] = object.removeValue(forKey: "marks")
+  object["marks"] = object.removeValue(forKey: "portals")
   try JSONSerialization.data(withJSONObject: object).write(to: legacyURL)
 
-  let repository = MarkRepository(fileURL: currentURL, legacyFileURL: legacyURL)
-  #expect(try repository.load() == [mark])
+  let repository = PortalRepository(fileURL: currentURL, legacyFileURL: legacyURL)
+  #expect(try repository.load() == [portal])
   #expect(FileManager.default.fileExists(atPath: currentURL.path))
   #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
-  #expect(try repository.load() == [mark])
+  #expect(try repository.load() == [portal])
 }
 
 @Test func jumpListTraversesAndClearsForwardHistory() {
@@ -197,18 +198,18 @@ private func location(
 @Test func markGeometryHandlesCropOriginsAndClamping() {
   let cropBox = CGRect(x: 40, y: 80, width: 600, height: 800)
   let pageRect = CGRect(x: 100, y: 160, width: 180, height: 240)
-  let normalized = MarkGeometry.normalized(rect: pageRect, in: cropBox)
+  let normalized = PortalGeometry.normalized(rect: pageRect, in: cropBox)
   #expect(normalized == NormalizedRect(x: 0.1, y: 0.1, width: 0.3, height: 0.3))
-  #expect(MarkGeometry.pageRect(for: normalized!, in: cropBox) == pageRect)
+  #expect(PortalGeometry.pageRect(for: normalized!, in: cropBox) == pageRect)
 
   let overflowing = CGRect(x: 20, y: 60, width: 80, height: 100)
   #expect(
-    MarkGeometry.normalized(rect: overflowing, in: cropBox)
+    PortalGeometry.normalized(rect: overflowing, in: cropBox)
       == NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.1))
 }
 
 @Test func replacingMissingDocumentPathPreservesMarkIdentity() {
-  let original = Mark(
+  let original = Portal(
     source: anchor(fingerprint: "source", path: "/missing/source.pdf"),
     destination: anchor(fingerprint: "destination", path: "/missing/destination.pdf")
   )
@@ -227,28 +228,29 @@ private func location(
 }
 
 @Test func markEndpointResolutionIsBidirectional() {
-  let mark = Mark(source: anchor(page: 2), destination: anchor(page: 9))
-  #expect(mark.oppositeAnchor(from: .source).pageIndex == 9)
-  #expect(mark.oppositeAnchor(from: .destination).pageIndex == 2)
-  #expect(mark.anchor(at: .destination).pageIndex == 9)
+  let portal = Portal(source: anchor(page: 2), destination: anchor(page: 9))
+  #expect(portal.oppositeAnchor(from: .source).pageIndex == 9)
+  #expect(portal.oppositeAnchor(from: .destination).pageIndex == 2)
+  #expect(portal.anchor(at: .destination).pageIndex == 9)
 }
 
 @Test func marksIndexIncludesAndSortsCurrentDocumentSourcesOnly() {
-  let sameDocument = Mark(source: anchor(page: 4, x: 0.5), destination: anchor(page: 1))
-  let outgoing = Mark(
+  let sameDocument = Portal(source: anchor(page: 4, x: 0.5), destination: anchor(page: 1))
+  let outgoing = Portal(
     source: anchor(page: 3), destination: anchor(fingerprint: "other", page: 8))
-  let unrelated = Mark(
+  let unrelated = Portal(
     source: anchor(fingerprint: "other", page: 0),
     destination: anchor(fingerprint: "third", page: 0))
-  let entries = MarksIndex.entries(
-    for: "document", marks: [sameDocument, outgoing, unrelated])
+  let entries = PortalsIndex.entries(
+    for: "document", portals: [sameDocument, outgoing, unrelated])
   #expect(entries.map(\.anchor.pageIndex) == [3, 4])
   #expect(entries.map(\.endpoint) == [.source, .source])
   #expect(entries.allSatisfy { $0.anchor.documentFingerprint == "document" })
 }
 
 @Test func commandCatalogSupportsExactAliasesAndFuzzyOrdering() {
-  #expect(CommandCatalog.exact(":marks")?.action == .showMarks)
+  #expect(CommandCatalog.exact(":portals")?.action == .showPortals)
+  #expect(CommandCatalog.exact(":marks")?.action == .showPortals)
   #expect(CommandCatalog.exact("e")?.action == .open)
   #expect(CommandCatalog.exact(":vsplit")?.action == .verticalSplit)
   #expect(CommandCatalog.exact("vs")?.action == .verticalSplit)
@@ -263,8 +265,8 @@ private func location(
   #expect(CommandCatalog.exact(":help")?.action == .help)
   #expect(CommandCatalog.exact("help")?.action == .help)
   #expect(CommandCatalog.exact("find")?.action == .findForward)
-  #expect(CommandCatalog.matches("marks").first?.name == "marks")
-  #expect(CommandCatalog.matches("mks").first?.name == "marks")
+  #expect(CommandCatalog.matches("portals").first?.name == "portals")
+  #expect(CommandCatalog.matches("marks").first?.name == "portals")
   #expect(CommandCatalog.matches("no command named this").isEmpty)
   #expect(CommandCatalog.matches("").count == CommandCatalog.commands.count)
 }
@@ -380,7 +382,7 @@ private func location(
   ])
   #expect(parsed.pdfURL?.path == "/tmp/rising_sea.pdf")
   #expect(parsed.goto?.pageIndex == 14)
-  #expect(parsed.goto?.bounds == NormalizedRect(x: 0.12, y: 0.40, width: 0.76, height: 0.18))
+  #expect(parsed.goto?.topY == 0.40)
   #expect(parsed.goto?.label == "3.1.3")
 }
 

@@ -1,0 +1,386 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1FCF264CE1D2EFF6DB021FA0 /* PortalOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */; };
+		4046C402CA3AAC8E945F0C2E /* LatticeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0F09D89945848E4F583A1183 /* LatticeCore */; };
+		460623D24598033F5DD53A3F /* DocumentImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216EB2F5DADF39A6EC490EC3 /* DocumentImporter.swift */; };
+		4A7920F978218E66586C8FEA /* PortalPhaseIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */; };
+		4EA13130D9AC86656065C7B0 /* ReaderModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1ECF54BDCEEEEDB51B1B7EF /* ReaderModel.swift */; };
+		5D33E2BAD1A71BB8DD986AA0 /* ReaderScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5086ACCD09286C3B1943B3 /* ReaderScreen.swift */; };
+		982107E66ED7CC94F403ADBC /* RecentsHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC978489A03AEF16AB6F69A4 /* RecentsHomeView.swift */; };
+		CA6E1A120FD92A67AF45E1D1 /* PDFController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63F05D03A4EEA0305747D4AE /* PDFController.swift */; };
+		CE40B7C2A29111F3EDBDAAD6 /* PDFKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B576119A0192C0A5F70EBED /* PDFKitView.swift */; };
+		E862A0949CADD2D78BC6BD23 /* LatticeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A05A5635933C3CD73361B540 /* LatticeApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		216EB2F5DADF39A6EC490EC3 /* DocumentImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentImporter.swift; sourceTree = "<group>"; };
+		63F05D03A4EEA0305747D4AE /* PDFController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFController.swift; sourceTree = "<group>"; };
+		8D95E4FB7D33338CDFCCF7E4 /* Lattice */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Lattice; path = ../../macos/Lattice; sourceTree = SOURCE_ROOT; };
+		9B576119A0192C0A5F70EBED /* PDFKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFKitView.swift; sourceTree = "<group>"; };
+		A05A5635933C3CD73361B540 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
+		BC978489A03AEF16AB6F69A4 /* RecentsHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentsHomeView.swift; sourceTree = "<group>"; };
+		D1ECF54BDCEEEEDB51B1B7EF /* ReaderModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderModel.swift; sourceTree = "<group>"; };
+		EB5086ACCD09286C3B1943B3 /* ReaderScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderScreen.swift; sourceTree = "<group>"; };
+		EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalPhaseIcon.swift; sourceTree = "<group>"; };
+		FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOverlayView.swift; sourceTree = "<group>"; };
+		FF3B53D4F9DD5D7C4B93487D /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		14A2C5F5B2F00EFB910846F0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4046C402CA3AAC8E945F0C2E /* LatticeCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		11DBE2CDA4885CF9FA6A4DC4 = {
+			isa = PBXGroup;
+			children = (
+				66C35027CA9C4775ED32E45A /* Packages */,
+				9471B4E37D4A6C61846F8B04 /* Sources */,
+				CCE89F12DC10AE075C3E4F67 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		37AA926BDDD36231A33AD90D /* Lattice */ = {
+			isa = PBXGroup;
+			children = (
+				216EB2F5DADF39A6EC490EC3 /* DocumentImporter.swift */,
+				A05A5635933C3CD73361B540 /* LatticeApp.swift */,
+				63F05D03A4EEA0305747D4AE /* PDFController.swift */,
+				9B576119A0192C0A5F70EBED /* PDFKitView.swift */,
+				FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */,
+				EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */,
+				D1ECF54BDCEEEEDB51B1B7EF /* ReaderModel.swift */,
+				EB5086ACCD09286C3B1943B3 /* ReaderScreen.swift */,
+				BC978489A03AEF16AB6F69A4 /* RecentsHomeView.swift */,
+			);
+			path = Lattice;
+			sourceTree = "<group>";
+		};
+		66C35027CA9C4775ED32E45A /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				8D95E4FB7D33338CDFCCF7E4 /* Lattice */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		9471B4E37D4A6C61846F8B04 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				37AA926BDDD36231A33AD90D /* Lattice */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		CCE89F12DC10AE075C3E4F67 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FF3B53D4F9DD5D7C4B93487D /* Lattice.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		10F314C2EB47810D0E866617 /* Lattice */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C880ACEC5FD16DEFE7B3405B /* Build configuration list for PBXNativeTarget "Lattice" */;
+			buildPhases = (
+				A8D96910FE38A9E143FFFF6F /* Sources */,
+				14A2C5F5B2F00EFB910846F0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Lattice;
+			packageProductDependencies = (
+				0F09D89945848E4F583A1183 /* LatticeCore */,
+			);
+			productName = Lattice;
+			productReference = FF3B53D4F9DD5D7C4B93487D /* Lattice.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7BD34ED1C5FC8CFC6AD42CFA /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					10F314C2EB47810D0E866617 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = A5AE16426385566F00251C16 /* Build configuration list for PBXProject "Lattice" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 11DBE2CDA4885CF9FA6A4DC4;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				463D1DFA5DBED3605BDC15A8 /* XCLocalSwiftPackageReference "../../macos/Lattice" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CCE89F12DC10AE075C3E4F67 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				10F314C2EB47810D0E866617 /* Lattice */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A8D96910FE38A9E143FFFF6F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				460623D24598033F5DD53A3F /* DocumentImporter.swift in Sources */,
+				E862A0949CADD2D78BC6BD23 /* LatticeApp.swift in Sources */,
+				CA6E1A120FD92A67AF45E1D1 /* PDFController.swift in Sources */,
+				CE40B7C2A29111F3EDBDAAD6 /* PDFKitView.swift in Sources */,
+				1FCF264CE1D2EFF6DB021FA0 /* PortalOverlayView.swift in Sources */,
+				4A7920F978218E66586C8FEA /* PortalPhaseIcon.swift in Sources */,
+				4EA13130D9AC86656065C7B0 /* ReaderModel.swift in Sources */,
+				5D33E2BAD1A71BB8DD986AA0 /* ReaderScreen.swift in Sources */,
+				982107E66ED7CC94F403ADBC /* RecentsHomeView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		24DD958047FD5F25F87EE01D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ashugkg.lattice;
+				PRODUCT_NAME = Lattice;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		44CC0DAB5D84391ABB072109 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		5C17E605D33C3BD0464776E6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Lattice;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportsDocumentBrowser = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ashugkg.lattice;
+				PRODUCT_NAME = Lattice;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A0EC25BDAF179317419DD17A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A5AE16426385566F00251C16 /* Build configuration list for PBXProject "Lattice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0EC25BDAF179317419DD17A /* Debug */,
+				44CC0DAB5D84391ABB072109 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C880ACEC5FD16DEFE7B3405B /* Build configuration list for PBXNativeTarget "Lattice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C17E605D33C3BD0464776E6 /* Debug */,
+				24DD958047FD5F25F87EE01D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		463D1DFA5DBED3605BDC15A8 /* XCLocalSwiftPackageReference "../../macos/Lattice" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../macos/Lattice;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0F09D89945848E4F583A1183 /* LatticeCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LatticeCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 7BD34ED1C5FC8CFC6AD42CFA /* Project object */;
+}

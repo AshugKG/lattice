@@ -24,7 +24,9 @@ public struct CommandDescriptor: Equatable, Sendable {
 
 public enum CommandCatalog {
   public static let commands: [CommandDescriptor] = [
-    .init(name: "marks", summary: "List marks in this PDF", action: .showMarks),
+    .init(
+      name: "portals", aliases: ["marks"], summary: "List portals in this PDF",
+      action: .showPortals),
     .init(
       name: "home", aliases: ["recents"], summary: "Show the recent PDFs home screen",
       shortcut: ":home", action: .showHome),
@@ -47,8 +49,9 @@ public enum CommandCatalog {
       name: "find", aliases: ["search"], summary: "Search forward in this PDF", shortcut: "/",
       action: .findForward),
     .init(
-      name: "mark", summary: "Create a mark", shortcut: "m",
-      action: .captureMark),
+      name: "portal", aliases: ["mark"],
+      summary: "Start/advance portal capture (press twice: source then destination)",
+      shortcut: "p", action: .capturePortal),
     .init(name: "back", summary: "Jump backward", shortcut: "⌃O", action: .jumpBackward),
     .init(name: "forward", summary: "Jump forward", shortcut: "⌃I", action: .jumpForward),
     .init(
@@ -75,7 +78,7 @@ public enum CommandCatalog {
     .init(name: "help", summary: "Show keyboard shortcuts", shortcut: ":help", action: .help),
     .init(
       name: "cancel", summary: "Cancel mark capture or clear search", shortcut: "Esc",
-      action: .cancelMark),
+      action: .cancelPortal),
   ]
 
   public static func exact(_ query: String) -> CommandDescriptor? {

@@ -3,12 +3,12 @@ import CoreGraphics
 import LatticeCore
 import PDFKit
 
-enum MarkPreviewResult {
+enum PortalPreviewResult {
   case image(NSImage)
   case unavailable(String)
 }
 
-final class MarkPreviewRenderer: @unchecked Sendable {
+final class PortalPreviewRenderer: @unchecked Sendable {
   private let queue = DispatchQueue(
     label: "com.ashugkg.lattice.mark-preview", qos: .userInitiated)
   private let cache = NSCache<NSString, NSImage>()
@@ -16,9 +16,9 @@ final class MarkPreviewRenderer: @unchecked Sendable {
 
   @MainActor
   func render(
-    anchor: MarkAnchor,
+    anchor: PortalAnchor,
     key: PreviewCacheKey,
-    completion: @escaping @MainActor (MarkPreviewResult) -> Void
+    completion: @escaping @MainActor (PortalPreviewResult) -> Void
   ) {
     let cacheKey = keyString(key)
     if let image = cache.object(forKey: cacheKey as NSString) {
@@ -36,7 +36,7 @@ final class MarkPreviewRenderer: @unchecked Sendable {
     }
   }
 
-  private func makePreview(anchor: MarkAnchor, key: PreviewCacheKey) -> MarkPreviewResult {
+  private func makePreview(anchor: PortalAnchor, key: PreviewCacheKey) -> PortalPreviewResult {
     let url = URL(fileURLWithPath: anchor.documentPath)
     guard FileManager.default.fileExists(atPath: url.path) else {
       return .unavailable("Destination PDF is missing")
@@ -57,7 +57,7 @@ final class MarkPreviewRenderer: @unchecked Sendable {
     }
 
     let pageBox = page.bounds(for: .cropBox)
-    guard let snippet = MarkGeometry.pageRect(for: anchor.bounds, in: pageBox), !snippet.isEmpty
+    guard let snippet = PortalGeometry.pageRect(for: anchor.bounds, in: pageBox), !snippet.isEmpty
     else {
       return .unavailable("Destination box is invalid")
     }

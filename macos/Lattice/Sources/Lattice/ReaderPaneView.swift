@@ -1,11 +1,12 @@
 import AppKit
 import LatticeCore
+import LatticeReader
 import PDFKit
 
 @MainActor
 final class ReaderPaneView: NSView {
   let pdfView = LatticePDFView()
-  let markOverlay = MarkOverlayView()
+  let portalOverlay = PortalOverlayView()
   var descriptor: DocumentDescriptor?
   var openGeneration = UUID()
 
@@ -29,20 +30,20 @@ final class ReaderPaneView: NSView {
     pdfView.maxScaleFactor = 4
     pdfView.backgroundColor = .windowBackgroundColor
 
-    markOverlay.translatesAutoresizingMaskIntoConstraints = false
-    markOverlay.pdfView = pdfView
+    portalOverlay.translatesAutoresizingMaskIntoConstraints = false
+    portalOverlay.pdfView = pdfView
 
     addSubview(pdfView)
-    pdfView.addSubview(markOverlay)
+    pdfView.addSubview(portalOverlay)
     NSLayoutConstraint.activate([
       pdfView.topAnchor.constraint(equalTo: topAnchor),
       pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
       pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
       pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
-      markOverlay.topAnchor.constraint(equalTo: pdfView.topAnchor),
-      markOverlay.leadingAnchor.constraint(equalTo: pdfView.leadingAnchor),
-      markOverlay.trailingAnchor.constraint(equalTo: pdfView.trailingAnchor),
-      markOverlay.bottomAnchor.constraint(equalTo: pdfView.bottomAnchor),
+      portalOverlay.topAnchor.constraint(equalTo: pdfView.topAnchor),
+      portalOverlay.leadingAnchor.constraint(equalTo: pdfView.leadingAnchor),
+      portalOverlay.trailingAnchor.constraint(equalTo: pdfView.trailingAnchor),
+      portalOverlay.bottomAnchor.constraint(equalTo: pdfView.bottomAnchor),
     ])
     updateActiveChrome()
   }

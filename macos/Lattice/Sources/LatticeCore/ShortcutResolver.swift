@@ -22,12 +22,12 @@ public enum ReaderCommand: Equatable, Sendable {
   case findBackward
   case findNext
   case findPrevious
-  case captureMark
-  case cancelMark
+  case capturePortal
+  case cancelPortal
   case jumpBackward
   case jumpForward
   case showCommandPalette
-  case showMarks
+  case showPortals
   case showHome
   case verticalSplit
   case horizontalSplit
@@ -78,7 +78,7 @@ public struct ShortcutResolver: Sendable {
       if keyCode == 37 || normalized == "l" { return .focusRight }
     }
 
-    if keyCode == 53 || key == "\u{1b}" { return .cancelMark }
+    if keyCode == 53 || key == "\u{1b}" { return .cancelPortal }
 
     if key == "g" {
       defer { lastG = timestamp }
@@ -98,7 +98,7 @@ public struct ShortcutResolver: Sendable {
       "=": .zoomIn,
       "-": .zoomOut,
       "0": .fitWidth,
-      "m": .captureMark,
+      "p": .capturePortal,
       "/": .findForward,
       "?": .findBackward,
       "n": .findNext,

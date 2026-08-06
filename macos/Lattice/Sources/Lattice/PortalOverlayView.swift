@@ -1,39 +1,50 @@
 import AppKit
 import LatticeCore
+import LatticeReader
 import PDFKit
 
-enum MarkCaptureMode: Equatable {
+enum PortalCaptureMode: Equatable {
   case inactive
+  /// Drag to place the source box.
   case source
+  /// Source placed; waiting for a second portal-button / `p` press before destination drag.
+  case sourcePlaced
+  /// Drag to place the destination box.
   case destination
+
+  var allowsDrawing: Bool {
+    self == .source || self == .destination
+  }
+
+  var isActive: Bool { self != .inactive }
 }
 
-struct CapturedMarkBox {
+struct CapturedPortalBox {
   let pageIndex: Int
   let bounds: NormalizedRect
   let quotedText: String?
 }
 
-struct MarkInteractionTarget {
-  let mark: Mark
-  let endpoint: MarkEndpoint
+struct PortalInteractionTarget {
+  let portal: Portal
+  let endpoint: PortalEndpoint
   let rect: NSRect
 }
 
-private struct MarkInteractionKey: Hashable {
-  let markID: UUID
-  let endpoint: MarkEndpoint
+private struct PortalInteractionKey: Hashable {
+  let portalID: UUID
+  let endpoint: PortalEndpoint
 }
 
 @MainActor
-private final class MarkHitTargetView: NSView {
-  let key: MarkInteractionKey
+private final class PortalHitTargetView: NSView {
+  let key: PortalInteractionKey
   var onActivate: (() -> Void)?
   var onDelete: (() -> Void)?
 
   private var isPressed = false
 
-  init(key: MarkInteractionKey) {
+  init(key: PortalInteractionKey) {
     self.key = key
     super.init(frame: .zero)
   }
@@ -66,23 +77,23 @@ private final class MarkHitTargetView: NSView {
       return
     }
     let menu = NSMenu()
-    let delete = NSMenuItem(title: "Delete Mark", action: #selector(deleteMark), keyEquivalent: "")
+    let delete = NSMenuItem(title: "Delete Portal", action: #selector(deletePortal), keyEquivalent: "")
     delete.target = self
     menu.addItem(delete)
     NSMenu.popUpContextMenu(menu, with: event, for: self)
   }
 
-  @objc private func deleteMark() {
+  @objc private func deletePortal() {
     onDelete?()
   }
 }
 
 @MainActor
-final class MarkOverlayView: NSView {
+final class PortalOverlayView: NSView {
   weak var pdfView: PDFView?
-  var marks: [Mark] = [] { didSet { rebuildInteractionViews() } }
+  var portals: [Portal] = [] { didSet { rebuildInteractionViews() } }
   var documentFingerprint: String? { didSet { rebuildInteractionViews() } }
-  var captureMode: MarkCaptureMode = .inactive {
+  var captureMode: PortalCaptureMode = .inactive {
     didSet {
       dragStart = nil
       dragCurrent = nil
@@ -91,18 +102,18 @@ final class MarkOverlayView: NSView {
   }
   var arrivalAnchorID: UUID? { didSet { needsDisplay = true } }
   /// External focus rect (LeetMath / CLI); drawn until cleared or replaced.
-  var focusHighlight: MarkAnchor? { didSet { needsDisplay = true } }
-  var onBoxCaptured: ((CapturedMarkBox) -> Void)?
-  var onActivateMark: ((MarkInteractionTarget) -> Void)?
-  var onDeleteMark: ((UUID) -> Void)?
-  var onHoverMark: ((MarkInteractionTarget?) -> Void)?
+  var focusHighlight: PortalAnchor? { didSet { needsDisplay = true } }
+  var onBoxCaptured: ((CapturedPortalBox) -> Void)?
+  var onActivatePortal: ((PortalInteractionTarget) -> Void)?
+  var onDeletePortal: ((UUID) -> Void)?
+  var onHoverPortal: ((PortalInteractionTarget?) -> Void)?
 
   private var dragStart: NSPoint?
   private var dragCurrent: NSPoint?
   private var dragPage: PDFPage?
-  private var hoveredMarkID: UUID?
-  private var hoveredEndpoint: MarkEndpoint?
-  private var interactionViews: [MarkInteractionKey: MarkHitTargetView] = [:]
+  private var hoveredPortalID: UUID?
+  private var hoveredEndpoint: PortalEndpoint?
+  private var interactionViews: [PortalInteractionKey: PortalHitTargetView] = [:]
   private var hoverTrackingArea: NSTrackingArea?
   private var flagsMonitor: Any?
 
@@ -145,14 +156,14 @@ final class MarkOverlayView: NSView {
   }
 
   override func resetCursorRects() {
-    if captureMode != .inactive {
+    if captureMode.allowsDrawing {
       addCursorRect(bounds, cursor: .crosshair)
     }
   }
 
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard !isHidden, alphaValue > 0.01 else { return nil }
-    if captureMode != .inactive { return self }
+    if captureMode.allowsDrawing { return self }
     let event = NSApp.currentEvent
     let isControlClick = event?.modifierFlags.contains(.control) == true
     let isSecondaryClick = event?.type == .rightMouseDown || event?.type == .rightMouseUp
@@ -162,7 +173,7 @@ final class MarkOverlayView: NSView {
   }
 
   override func mouseDown(with event: NSEvent) {
-    guard captureMode != .inactive, let pdfView else { return }
+    guard captureMode.allowsDrawing, let pdfView else { return }
     let point = convert(event.locationInWindow, from: nil)
     let pdfPoint = pdfView.convert(point, from: self)
     guard let page = pdfView.page(for: pdfPoint, nearest: false) else {
@@ -176,14 +187,14 @@ final class MarkOverlayView: NSView {
   }
 
   override func mouseDragged(with event: NSEvent) {
-    guard captureMode != .inactive, dragStart != nil, let dragPage else { return }
+    guard captureMode.allowsDrawing, dragStart != nil, let dragPage else { return }
     let point = convert(event.locationInWindow, from: nil)
     dragCurrent = clamp(point, to: overlayRect(for: dragPage))
     needsDisplay = true
   }
 
   override func mouseUp(with event: NSEvent) {
-    guard captureMode != .inactive else { return }
+    guard captureMode.allowsDrawing else { return }
 
     defer {
       dragStart = nil
@@ -210,23 +221,23 @@ final class MarkOverlayView: NSView {
   }
 
   override func mouseExited(with event: NSEvent) {
-    clearHoveredMark()
+    clearHoveredPortal()
   }
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     guard documentFingerprint != nil else { return }
 
-    for mark in marks {
-      if mark.destination.documentFingerprint == documentFingerprint {
+    for portal in portals {
+      if portal.destination.documentFingerprint == documentFingerprint {
         drawDestination(
-          mark.destination,
-          hovered: mark.id == hoveredMarkID && hoveredEndpoint == .destination)
+          portal.destination,
+          hovered: portal.id == hoveredPortalID && hoveredEndpoint == .destination)
       }
-      if mark.source.documentFingerprint == documentFingerprint {
+      if portal.source.documentFingerprint == documentFingerprint {
         drawSource(
-          mark.source,
-          hovered: mark.id == hoveredMarkID && hoveredEndpoint == .source)
+          portal.source,
+          hovered: portal.id == hoveredPortalID && hoveredEndpoint == .source)
       }
     }
 
@@ -245,7 +256,7 @@ final class MarkOverlayView: NSView {
     }
   }
 
-  private func drawFocusHighlight(_ anchor: MarkAnchor) {
+  private func drawFocusHighlight(_ anchor: PortalAnchor) {
     guard let rect = overlayRect(for: anchor) else { return }
     let color = NSColor.systemOrange
     color.withAlphaComponent(0.22).setFill()
@@ -256,7 +267,7 @@ final class MarkOverlayView: NSView {
     path.stroke()
   }
 
-  private func drawSource(_ anchor: MarkAnchor, hovered: Bool) {
+  private func drawSource(_ anchor: PortalAnchor, hovered: Bool) {
     guard let rect = overlayRect(for: anchor) else { return }
     let isArrival = anchor.id == arrivalAnchorID
     let color = NSColor.controlAccentColor
@@ -268,7 +279,7 @@ final class MarkOverlayView: NSView {
     path.stroke()
   }
 
-  private func drawDestination(_ anchor: MarkAnchor, hovered: Bool) {
+  private func drawDestination(_ anchor: PortalAnchor, hovered: Bool) {
     guard let rect = overlayRect(for: anchor) else { return }
     let isArrival = anchor.id == arrivalAnchorID
     let color = NSColor.controlAccentColor
@@ -280,18 +291,18 @@ final class MarkOverlayView: NSView {
     path.stroke()
   }
 
-  private func sourceRect(for mark: Mark) -> NSRect? {
-    guard mark.source.documentFingerprint == documentFingerprint else { return nil }
-    return overlayRect(for: mark.source)
+  private func sourceRect(for portal: Portal) -> NSRect? {
+    guard portal.source.documentFingerprint == documentFingerprint else { return nil }
+    return overlayRect(for: portal.source)
   }
 
-  private func destinationRect(for mark: Mark) -> NSRect? {
-    guard mark.destination.documentFingerprint == documentFingerprint else { return nil }
-    return overlayRect(for: mark.destination)
+  private func destinationRect(for portal: Portal) -> NSRect? {
+    guard portal.destination.documentFingerprint == documentFingerprint else { return nil }
+    return overlayRect(for: portal.destination)
   }
 
-  private func interactionRect(for mark: Mark, endpoint: MarkEndpoint) -> NSRect? {
-    endpoint == .source ? sourceRect(for: mark) : destinationRect(for: mark)
+  private func interactionRect(for portal: Portal, endpoint: PortalEndpoint) -> NSRect? {
+    endpoint == .source ? sourceRect(for: portal) : destinationRect(for: portal)
   }
 
   private func rebuildInteractionViews() {
@@ -299,32 +310,32 @@ final class MarkOverlayView: NSView {
       view.removeFromSuperview()
     }
     interactionViews.removeAll(keepingCapacity: true)
-    hoveredMarkID = nil
+    hoveredPortalID = nil
     hoveredEndpoint = nil
-    onHoverMark?(nil)
+    onHoverPortal?(nil)
 
-    guard captureMode == .inactive, let documentFingerprint else {
+    guard !captureMode.allowsDrawing, captureMode != .sourcePlaced, let documentFingerprint else {
       needsDisplay = true
       window?.invalidateCursorRects(for: self)
       return
     }
 
-    for mark in marks {
-      if mark.source.documentFingerprint == documentFingerprint {
-        addInteractionView(for: mark.id, endpoint: .source)
+    for portal in portals {
+      if portal.source.documentFingerprint == documentFingerprint {
+        addInteractionView(for: portal.id, endpoint: .source)
       }
-      if mark.destination.documentFingerprint == documentFingerprint {
-        addInteractionView(for: mark.id, endpoint: .destination)
+      if portal.destination.documentFingerprint == documentFingerprint {
+        addInteractionView(for: portal.id, endpoint: .destination)
       }
     }
     layoutInteractionViews()
   }
 
-  private func addInteractionView(for markID: UUID, endpoint: MarkEndpoint) {
-    let key = MarkInteractionKey(markID: markID, endpoint: endpoint)
-    let view = MarkHitTargetView(key: key)
+  private func addInteractionView(for portalID: UUID, endpoint: PortalEndpoint) {
+    let key = PortalInteractionKey(portalID: portalID, endpoint: endpoint)
+    let view = PortalHitTargetView(key: key)
     view.onActivate = { [weak self] in self?.activate(key) }
-    view.onDelete = { [weak self] in self?.onDeleteMark?(markID) }
+    view.onDelete = { [weak self] in self?.onDeletePortal?(portalID) }
     addSubview(view)
     interactionViews[key] = view
   }
@@ -332,8 +343,8 @@ final class MarkOverlayView: NSView {
   private func layoutInteractionViews() {
     for (key, view) in interactionViews {
       guard captureMode == .inactive,
-        let mark = marks.first(where: { $0.id == key.markID }),
-        let rect = interactionRect(for: mark, endpoint: key.endpoint)
+        let portal = portals.first(where: { $0.id == key.portalID }),
+        let rect = interactionRect(for: portal, endpoint: key.endpoint)
       else {
         view.isHidden = true
         continue
@@ -347,51 +358,51 @@ final class MarkOverlayView: NSView {
     window?.invalidateCursorRects(for: self)
   }
 
-  private func activate(_ key: MarkInteractionKey) {
+  private func activate(_ key: PortalInteractionKey) {
     guard captureMode == .inactive,
-      let mark = marks.first(where: { $0.id == key.markID }),
-      let rect = interactionRect(for: mark, endpoint: key.endpoint)
+      let portal = portals.first(where: { $0.id == key.portalID }),
+      let rect = interactionRect(for: portal, endpoint: key.endpoint)
     else { return }
-    onActivateMark?(MarkInteractionTarget(mark: mark, endpoint: key.endpoint, rect: rect))
+    onActivatePortal?(PortalInteractionTarget(portal: portal, endpoint: key.endpoint, rect: rect))
   }
 
   private func updateModifierHover(at point: NSPoint, controlHeld: Bool) {
     guard captureMode == .inactive, controlHeld, let key = interactionKey(at: point) else {
-      clearHoveredMark()
+      clearHoveredPortal()
       return
     }
-    guard hoveredMarkID != key.markID || hoveredEndpoint != key.endpoint,
-      let mark = marks.first(where: { $0.id == key.markID }),
-      let rect = interactionRect(for: mark, endpoint: key.endpoint)
+    guard hoveredPortalID != key.portalID || hoveredEndpoint != key.endpoint,
+      let portal = portals.first(where: { $0.id == key.portalID }),
+      let rect = interactionRect(for: portal, endpoint: key.endpoint)
     else { return }
-    hoveredMarkID = key.markID
+    hoveredPortalID = key.portalID
     hoveredEndpoint = key.endpoint
-    onHoverMark?(MarkInteractionTarget(mark: mark, endpoint: key.endpoint, rect: rect))
+    onHoverPortal?(PortalInteractionTarget(portal: portal, endpoint: key.endpoint, rect: rect))
     needsDisplay = true
   }
 
   private func updateModifierHoverForCurrentPointer(controlHeld: Bool) {
     guard let window else {
-      clearHoveredMark()
+      clearHoveredPortal()
       return
     }
     let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
     updateModifierHover(at: convert(windowPoint, from: nil), controlHeld: controlHeld)
   }
 
-  private func interactionKey(at point: NSPoint) -> MarkInteractionKey? {
-    for case let view as MarkHitTargetView in subviews.reversed()
+  private func interactionKey(at point: NSPoint) -> PortalInteractionKey? {
+    for case let view as PortalHitTargetView in subviews.reversed()
     where !view.isHidden && view.frame.contains(point) {
       return view.key
     }
     return nil
   }
 
-  private func clearHoveredMark() {
-    guard hoveredMarkID != nil || hoveredEndpoint != nil else { return }
-    hoveredMarkID = nil
+  private func clearHoveredPortal() {
+    guard hoveredPortalID != nil || hoveredEndpoint != nil else { return }
+    hoveredPortalID = nil
     hoveredEndpoint = nil
-    onHoverMark?(nil)
+    onHoverPortal?(nil)
     needsDisplay = true
   }
 
@@ -401,12 +412,12 @@ final class MarkOverlayView: NSView {
     self.flagsMonitor = nil
   }
 
-  private func overlayRect(for anchor: MarkAnchor) -> NSRect? {
+  private func overlayRect(for anchor: PortalAnchor) -> NSRect? {
     guard let pdfView, let document = pdfView.document,
       let page = document.page(at: anchor.pageIndex)
     else { return nil }
     let box = page.bounds(for: .cropBox)
-    guard let pageRect = MarkGeometry.pageRect(for: anchor.bounds, in: box) else { return nil }
+    guard let pageRect = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return nil }
     return convert(pdfView.convert(pageRect, from: page), from: pdfView)
   }
 
@@ -415,15 +426,15 @@ final class MarkOverlayView: NSView {
     return convert(pdfView.convert(page.bounds(for: .cropBox), from: page), from: pdfView)
   }
 
-  private func capturedBox(from overlayRect: NSRect, page: PDFPage) -> CapturedMarkBox? {
+  private func capturedBox(from overlayRect: NSRect, page: PDFPage) -> CapturedPortalBox? {
     guard let pdfView, let document = pdfView.document else { return nil }
     let viewRect = pdfView.convert(overlayRect, from: self)
     let pageRect = pdfView.convert(viewRect, to: page).intersection(page.bounds(for: .cropBox))
     let box = page.bounds(for: .cropBox)
-    guard let normalized = MarkGeometry.normalized(rect: pageRect, in: box) else { return nil }
+    guard let normalized = PortalGeometry.normalized(rect: pageRect, in: box) else { return nil }
     let quote = page.selection(for: pageRect)?.string?.trimmingCharacters(
       in: .whitespacesAndNewlines)
-    return CapturedMarkBox(
+    return CapturedPortalBox(
       pageIndex: document.index(for: page),
       bounds: normalized,
       quotedText: quote?.isEmpty == true ? nil : quote

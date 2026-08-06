@@ -19,7 +19,7 @@ The project is licensed under `AGPL-3.0-or-later`. PDFs remain on the local devi
 - Hover previews, exact mark teleports, cross-document path recovery, and source context-menu deletion
 - Session-only Vim jump history with backward and forward traversal
 - Exact per-document reading position and zoom restored across launches
-- Native fuzzy Ex-command palette and a Vim-style `:marks` mark index
+- Native fuzzy Ex-command palette and a Vim-style `:portals` portal index
 - Recent-PDF home screen with page thumbnails when Lattice launches with no document
 - Independent two-pane PDF duplication through `:vsplit` and `:hsplit`, with `:q` / `:qa` and `Ctrl+hjkl`
 - Active split pane owns keyboard navigation, half-page motion, and toolbar zoom
@@ -36,16 +36,16 @@ bun install
 bun run native -- /absolute/path/to/document.pdf
 ```
 
-Open at a page with a highlight rectangle (used by LeetMath):
+Open at a problem so its label sits at the **top** of the viewport (used by LeetMath):
 
 ```sh
 bun run open -- /absolute/path/to/document.pdf \
   --page-index 25 \
-  --rect 0.08,0.40,0.84,0.18 \
+  --top 0.42 \
   --label 1.2.A
 ```
 
-`--page-index` is 0-based. `--rect` is normalized crop-box `x,y,width,height` in `[0,1]`.
+`--page-index` is 0-based. `--top` is normalized from the top of the page (`0` = top, `1` = bottom).
 Helper: [`scripts/lattice-open.sh`](scripts/lattice-open.sh).
 
 You can also click Open or drop a PDF into the reader.
@@ -59,6 +59,19 @@ open macos/Lattice/build/Lattice.app
 
 The generated `Info.plist` registers Lattice as an alternate PDF viewer. Signing, notarization, and
 distribution are deferred.
+
+## iOS application (iPhone / iPad)
+
+`ios/Lattice` is a minimal SwiftUI + PDFKit port that reuses `LatticeCore` (recents, resume, jumps,
+marks). It supports Open from Files, back/forward, touch mark capture, go-to-page, and find.
+
+```sh
+cd ios/Lattice && xcodegen generate && open Lattice.xcodeproj
+# or
+bun run ios:generate
+```
+
+See [`ios/Lattice/README.md`](ios/Lattice/README.md).
 
 ## Cross-platform MuPDF reader (Windows / macOS / Linux)
 
@@ -103,7 +116,7 @@ Marks and reading state use the same JSON schemas as macOS. Paths:
 - macOS: `~/Library/Application Support/Lattice/` (via the platform data directory)
 - Linux: `$XDG_DATA_HOME/Lattice/` (usually `~/.local/share/Lattice/`)
 
-Files: `marks-v1.json`, `reading-state-v1.json`, `recents-v1.json`.
+Files: `portals-v1.json` (migrates from `marks-v1.json`), `reading-state-v1.json`, `recents-v1.json`.
 
 ### Sharing a Windows `.exe` (no compile for your friend)
 
@@ -146,13 +159,13 @@ First launch may need Windows Defender / SmartScreen “More info → Run anyway
 | `/`, `?`           | Search forward or backward     |
 | `n`, `N`           | Next or previous search match  |
 | `Cmd+F`            | Focus the toolbar search field |
-| `m`                | Start rectangle mark capture   |
-| `Ctrl+click`       | Follow a mark (source or destination) |
+| `p`                | Start/advance portal capture (press twice) |
+| `Ctrl+click`       | Follow a portal (source or destination) |
 | `Ctrl+O`, `Ctrl+I` | Jump backward or forward       |
 | `Escape`           | Cancel mark capture or clear search |
 | `:`                | Fuzzy-find reader commands     |
 | `:N`               | Go to page N (e.g. `:12`)      |
-| `:marks`           | List marks in the current PDF  |
+| `:portals`         | List portals in the current PDF |
 | `:home`            | Show the recent PDFs home screen |
 | `:help`            | Show keyboard shortcuts        |
 | `:q`               | Close the active view (home if last) |

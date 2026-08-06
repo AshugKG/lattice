@@ -1,20 +1,22 @@
 import AppKit
 import LatticeCore
+import LatticeReader
 import PDFKit
 
 @MainActor
 final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, NSWindowDelegate {
   private let primaryPane = ReaderPaneView()
   private let splitView = NSSplitView()
-  private let previewCard = MarkPreviewCard(frame: .zero)
+  private let previewCard = PortalPreviewCard(frame: .zero)
   private let commandPalette = CommandPaletteView(frame: .zero)
   private let searchPrompt = SearchPromptView(frame: .zero)
-  private let marksView = MarksListView(frame: .zero)
-  private let markRepository = MarkRepository()
+  private let portalsView = PortalsListView(frame: .zero)
+  private let portalRepository = PortalRepository()
   private let readingStateRepository = ReadingStateRepository()
   private let recentsRepository = RecentsRepository()
-  private let previewRenderer = MarkPreviewRenderer()
+  private let previewRenderer = PortalPreviewRenderer()
   private let filenameLabel = NSTextField(labelWithString: "No document open")
+  private let portalPhaseIndicator = PortalPhaseIndicatorView(frame: .zero)
   private let pageLabel = NSTextField(labelWithString: "— / —")
   private let scaleLabel = NSTextField(labelWithString: "100%")
   private let homeView = RecentsHomeView(frame: .zero)
@@ -25,7 +27,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private weak var selectedPane: ReaderPaneView?
   private var activePane: ReaderPaneView { selectedPane ?? primaryPane }
   private var pdfView: LatticePDFView { activePane.pdfView }
-  private var markOverlay: MarkOverlayView { activePane.markOverlay }
+  private var portalOverlay: PortalOverlayView { activePane.portalOverlay }
   private var panes: [ReaderPaneView] {
     secondaryPane.map { [primaryPane, $0] } ?? [primaryPane]
   }
@@ -33,9 +35,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private var paneShortcutResolver = ShortcutResolver()
 
   private var descriptor: DocumentDescriptor?
-  private var markDraft: MarkAnchor?
+  private var portalDraft: PortalAnchor?
   private weak var capturePane: ReaderPaneView?
-  private var marks: [Mark] = []
+  private var portals: [Portal] = []
   private var readingPositions: [String: ReadingPosition] = [:]
   private var recents: [RecentDocument] = []
   private var jumpList = JumpList()
@@ -43,8 +45,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private var scrollBoundsObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
   private var hoverWorkItem: DispatchWorkItem?
   private var readingSaveWorkItem: DispatchWorkItem?
-  private var hoveredMarkID: UUID?
-  private var hoveredEndpoint: MarkEndpoint?
+  private var hoveredPortalID: UUID?
+  private var hoveredEndpoint: PortalEndpoint?
   private var searchOriginRecorded = false
   private var lastSearchQuery = ""
   private var lastSearchDirection: SearchPromptView.Direction = .forward
@@ -67,7 +69,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     configureUI()
     observePDFView(in: primaryPane)
     installActivePaneKeyMonitor()
-    loadMarks()
+    loadPortals()
     loadReadingState()
     loadRecents()
     selectPane(primaryPane)
@@ -87,38 +89,17 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
-  /// Open a PDF and jump to a normalized rect with a persistent orange highlight.
+  /// Open a PDF and scroll so the problem's topY sits at the top of the viewport (no rectangle).
   func openDocument(at url: URL, goto: LaunchGoto) {
     openDocument(at: url, recordJump: true, resumeReadingPosition: false) { [weak self] descriptor in
       guard let self else { return }
-      let pageIndex = min(max(0, goto.pageIndex), max(0, descriptor.pageCount - 1))
-      let anchor = MarkAnchor(
-        documentFingerprint: descriptor.fingerprint,
-        documentPath: descriptor.url.path,
-        pageIndex: pageIndex,
-        bounds: goto.bounds,
-        quotedText: goto.label
-      )
-      self.applyFocusHighlight(anchor)
-    }
-  }
-
-  func applyFocusHighlight(_ anchor: MarkAnchor) {
-    for pane in panes {
-      pane.markOverlay.focusHighlight = nil
-    }
-    pdfView.go(to: anchor)
-    markOverlay.focusHighlight = anchor
-    markOverlay.arrivalAnchorID = anchor.id
-    // Keep highlight until the next focus jump; soft-pulse arrival for ~4s.
-    let overlay = markOverlay
-    let id = anchor.id
-    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak overlay] in
-      if overlay?.arrivalAnchorID == id {
-        overlay?.arrivalAnchorID = nil
+      for pane in self.panes {
+        pane.portalOverlay.focusHighlight = nil
       }
+      let pageIndex = min(max(0, goto.pageIndex), max(0, descriptor.pageCount - 1))
+      self.pdfView.scrollProblemToTop(pageIndex: pageIndex, topY: goto.topY)
+      self.updatePageAndScale()
     }
-    updatePageAndScale()
   }
 
   func openDocument(
@@ -140,11 +121,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     if document.isLocked, !unlock(document: document, named: url.lastPathComponent) { return }
 
     if !commandPalette.isHidden { commandPalette.dismiss() }
-    if !marksView.isHidden { marksView.dismiss() }
+    if !portalsView.isHidden { portalsView.dismiss() }
     persistCurrentReadingPosition()
     if recordJump { recordJumpListLocation() }
-    let pendingCapture = currentMarkCaptureMode()
-    if pendingCapture == .inactive { markDraft = nil }
+    let pendingCapture = currentPortalCaptureMode()
+    if pendingCapture == .inactive { portalDraft = nil }
     hidePreview()
     hideHome()
 
@@ -164,16 +145,16 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     targetPane.openGeneration = generation
     targetPane.descriptor = provisional
     descriptor = provisional
-    targetPane.markOverlay.documentFingerprint = provisional.fingerprint
-    targetPane.markOverlay.marks = marks
+    targetPane.portalOverlay.documentFingerprint = provisional.fingerprint
+    targetPane.portalOverlay.portals = portals
     targetPane.pdfView.document = document
     targetPane.pdfView.autoScales = true
     installScrollObservation(in: targetPane)
     if pendingCapture != .inactive {
-      targetPane.markOverlay.captureMode = pendingCapture
+      targetPane.portalOverlay.captureMode = pendingCapture
       capturePane = targetPane
       for pane in panes where pane !== targetPane {
-        pane.markOverlay.captureMode = .inactive
+        pane.portalOverlay.captureMode = .inactive
       }
     }
     DispatchQueue.main.async { [weak self, weak targetPane] in
@@ -183,7 +164,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     window?.title = "\(url.lastPathComponent) — Lattice"
     updatePageAndScale()
     activatePane(targetPane)
-    refreshMarkCaptureStatus()
+    refreshPortalCaptureStatus()
 
     if resumeReadingPosition, let saved = readingPositions[provisional.fingerprint] {
       let location = saved.location.clamped(pageCount: pageCount)
@@ -210,20 +191,20 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       if self.activePane === targetPane {
         self.descriptor = descriptor
       }
-      targetPane.markOverlay.documentFingerprint = descriptor.fingerprint
-      targetPane.markOverlay.marks = self.marks
+      targetPane.portalOverlay.documentFingerprint = descriptor.fingerprint
+      targetPane.portalOverlay.portals = self.portals
       if descriptor.fingerprint != provisionalFingerprint {
         self.jumpList.rewriteFingerprint(
           from: provisionalFingerprint,
           to: descriptor.fingerprint,
           path: url.path
         )
-        if let draft = self.markDraft,
+        if let draft = self.portalDraft,
           draft.documentFingerprint == provisionalFingerprint
             || (draft.documentPath == url.path
               && draft.documentFingerprint.hasPrefix("pending:"))
         {
-          self.markDraft = MarkAnchor(
+          self.portalDraft = PortalAnchor(
             id: draft.id,
             documentFingerprint: descriptor.fingerprint,
             documentPath: url.path,
@@ -242,7 +223,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       }
       self.recordRecent(descriptor)
       if self.activePane === targetPane {
-        self.refreshMarkCaptureStatus()
+        self.refreshPortalCaptureStatus()
         self.window?.title = "\(descriptor.name) — Lattice"
       }
       completion?(descriptor)
@@ -318,9 +299,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       self.activatePane(self.activePane)
     }
 
-    marksView.translatesAutoresizingMaskIntoConstraints = false
-    marksView.onActivate = { [weak self] mark in self?.activate(mark) }
-    marksView.onDismiss = { [weak self] in
+    portalsView.translatesAutoresizingMaskIntoConstraints = false
+    portalsView.onActivate = { [weak self] mark in self?.activate(mark) }
+    portalsView.onDismiss = { [weak self] in
       guard let self else { return }
       self.activatePane(self.activePane)
     }
@@ -344,12 +325,18 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     pageLabel.textColor = .secondaryLabelColor
     pageLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     scaleLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    portalPhaseIndicator.translatesAutoresizingMaskIntoConstraints = false
+    portalPhaseIndicator.setContentHuggingPriority(.required, for: .horizontal)
+    NSLayoutConstraint.activate([
+      portalPhaseIndicator.widthAnchor.constraint(equalToConstant: 28),
+      portalPhaseIndicator.heightAnchor.constraint(equalToConstant: 22),
+    ])
 
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     let stack = NSStackView(views: [
-      openButton, filenameLabel, pageLabel, spacer, searchField, zoomOut, scaleLabel, zoomIn, fit,
-      help,
+      openButton, portalPhaseIndicator, filenameLabel, pageLabel, spacer, searchField, zoomOut,
+      scaleLabel, zoomIn, fit, help,
     ])
     stack.orientation = .horizontal
     stack.alignment = .centerY
@@ -362,7 +349,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     rootView.addSubview(previewCard)
     rootView.addSubview(commandPalette)
     rootView.addSubview(searchPrompt)
-    rootView.addSubview(marksView)
+    rootView.addSubview(portalsView)
 
     NSLayoutConstraint.activate([
       toolbar.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -389,16 +376,16 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       searchPrompt.bottomAnchor.constraint(equalTo: rootView.bottomAnchor, constant: -18),
       searchPrompt.widthAnchor.constraint(equalToConstant: 420),
       searchPrompt.heightAnchor.constraint(equalToConstant: 44),
-      marksView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
-      marksView.centerYAnchor.constraint(equalTo: splitView.centerYAnchor),
-      marksView.widthAnchor.constraint(equalToConstant: 680),
-      marksView.heightAnchor.constraint(equalToConstant: 420),
+      portalsView.centerXAnchor.constraint(equalTo: rootView.centerXAnchor),
+      portalsView.centerYAnchor.constraint(equalTo: splitView.centerYAnchor),
+      portalsView.widthAnchor.constraint(equalToConstant: 680),
+      portalsView.heightAnchor.constraint(equalToConstant: 420),
     ])
   }
 
   private func configureReaderPane(_ pane: ReaderPaneView) {
     let pdfView = pane.pdfView
-    let markOverlay = pane.markOverlay
+    let portalOverlay = pane.portalOverlay
     pdfView.onBecameActive = { [weak self, weak pane] in
       guard let self, let pane else { return }
       self.activatePane(pane)
@@ -406,10 +393,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     pdfView.onOpen = { [weak self] in self?.presentOpenPanel() }
     pdfView.onHelp = { [weak self] in self?.showShortcutHelp() }
     pdfView.onFind = { [weak self] in self?.focusSearch(nil) }
-    pdfView.onCaptureMark = { [weak self, weak pane] in
+    pdfView.onCapturePortal = { [weak self, weak pane] in
       guard let self, let pane else { return }
       self.activatePane(pane)
-      self.beginMarkCapture()
+      self.advancePortalCapture()
     }
     pdfView.onNonLocalCommand = { [weak self, weak pane] command in
       guard let self, let pane else { return }
@@ -424,7 +411,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     pdfView.onViewportChanged = { [weak self, weak pane] in
       guard let self, let pane else { return }
       if self.selectedPane !== pane { self.activatePane(pane) }
-      pane.markOverlay.viewportDidChange()
+      pane.portalOverlay.viewportDidChange()
       self.scheduleReadingPositionSave()
     }
     pdfView.onWillFollowLink = { [weak self, weak pane] in
@@ -432,20 +419,20 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       self.activatePane(pane)
       self.recordCurrentBeforeJump()
     }
-    markOverlay.onBoxCaptured = { [weak self, weak pane] box in
+    portalOverlay.onBoxCaptured = { [weak self, weak pane] box in
       guard let self, let pane else { return }
       self.activatePane(pane)
       self.capture(box)
     }
-    markOverlay.onActivateMark = { [weak self, weak pane] target in
+    portalOverlay.onActivatePortal = { [weak self, weak pane] target in
       guard let self, let pane else { return }
       self.activatePane(pane)
       self.activate(target)
     }
-    markOverlay.onDeleteMark = { [weak self] id in self?.deleteMark(id) }
-    markOverlay.onHoverMark = { [weak self, weak markOverlay] target in
-      guard let self, let markOverlay else { return }
-      self.hover(target, from: markOverlay)
+    portalOverlay.onDeletePortal = { [weak self] id in self?.deletePortal(id) }
+    portalOverlay.onHoverPortal = { [weak self, weak portalOverlay] target in
+      guard let self, let portalOverlay else { return }
+      self.hover(target, from: portalOverlay)
     }
   }
 
@@ -463,14 +450,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       window?.title = "Lattice"
     }
     updatePageAndScale()
-    refreshMarkCaptureStatus()
+    refreshPortalCaptureStatus()
   }
 
   private func activatePane(_ pane: ReaderPaneView) {
-    let captureMode = currentMarkCaptureMode()
-    if captureMode != .inactive, let previous = capturePane, previous !== pane {
-      previous.markOverlay.captureMode = .inactive
-      pane.markOverlay.captureMode = captureMode
+    let captureMode = currentPortalCaptureMode()
+    if captureMode.isActive, let previous = capturePane, previous !== pane {
+      previous.portalOverlay.captureMode = .inactive
+      pane.portalOverlay.captureMode = captureMode
       capturePane = pane
     }
     if selectedPane !== pane {
@@ -481,7 +468,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       pane.showsActiveChrome = splitActive
       pane.setActivePane(true)
       updatePageAndScale()
-      refreshMarkCaptureStatus()
+      refreshPortalCaptureStatus()
     }
     if window?.firstResponder !== pane.pdfView {
       window?.makeFirstResponder(pane.pdfView)
@@ -493,7 +480,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       [weak self] event in
       guard let self else { return event }
       guard event.window === self.window else { return event }
-      guard self.commandPalette.isHidden, self.searchPrompt.isHidden, self.marksView.isHidden else {
+      guard self.commandPalette.isHidden, self.searchPrompt.isHidden, self.portalsView.isHidden else {
         return event
       }
       if self.window?.firstResponder is NSTextView || self.window?.firstResponder is NSTextField
@@ -516,8 +503,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       else { return event }
 
       if !self.homeView.isHidden {
-        if command == .cancelMark, self.currentMarkCaptureMode() != .inactive {
-          self.cancelMarkCapture()
+        if command == .cancelPortal, self.currentPortalCaptureMode().isActive {
+          self.cancelPortalCapture()
           return nil
         }
         if command == .jumpBackward || command == .jumpForward {
@@ -536,8 +523,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       case .scrollDown, .scrollUp, .scrollLeft, .scrollRight, .halfDown, .halfUp, .zoomIn, .zoomOut,
         .fitWidth, .documentStart, .documentEnd, .nextPage, .previousPage, .goToPage, .findForward,
         .findBackward, .findNext, .findPrevious, .jumpBackward, .jumpForward, .showCommandPalette,
-        .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .captureMark,
-        .cancelMark, .open, .help, .find, .quit:
+        .showPortals, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .capturePortal,
+        .cancelPortal, .open, .help, .find, .quit:
         if self.secondaryPane != nil {
           self.activatePane(self.activePane)
           self.activePane.pdfView.execute(command)
@@ -554,7 +541,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     pageLabel.stringValue = "— / —"
     scaleLabel.stringValue = "100%"
     window?.title = "Lattice"
-    refreshMarkCaptureStatus()
+    refreshPortalCaptureStatus()
   }
 
   private func returnToHome(recordJump: Bool = true) {
@@ -563,13 +550,13 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       return
     }
 
-    let pendingCapture = currentMarkCaptureMode()
-    let pendingDraft = markDraft
+    let pendingCapture = currentPortalCaptureMode()
+    let pendingDraft = portalDraft
     persistCurrentReadingPosition()
     if recordJump { recordJumpListLocation() }
     hidePreview()
     if !commandPalette.isHidden { commandPalette.dismiss() }
-    if !marksView.isHidden { marksView.dismiss() }
+    if !portalsView.isHidden { portalsView.dismiss() }
 
     if let secondary = secondaryPane {
       if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
@@ -577,7 +564,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       }
       secondary.descriptor = nil
       secondary.openGeneration = UUID()
-      secondary.markOverlay.captureMode = .inactive
+      secondary.portalOverlay.captureMode = .inactive
       secondary.pdfView.document = nil
       secondary.removeFromSuperview()
       secondaryPane = nil
@@ -587,18 +574,18 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       pane.descriptor = nil
       pane.openGeneration = UUID()
       pane.pdfView.document = nil
-      pane.markOverlay.documentFingerprint = nil
-      pane.markOverlay.marks = marks
-      pane.markOverlay.captureMode = .inactive
+      pane.portalOverlay.documentFingerprint = nil
+      pane.portalOverlay.portals = portals
+      pane.portalOverlay.captureMode = .inactive
       pane.showsActiveChrome = false
       pane.setActivePane(pane === primaryPane)
     }
     if pendingCapture != .inactive {
-      markDraft = pendingDraft
-      primaryPane.markOverlay.captureMode = pendingCapture
+      portalDraft = pendingDraft
+      primaryPane.portalOverlay.captureMode = pendingCapture
       capturePane = primaryPane
     } else {
-      markDraft = nil
+      portalDraft = nil
       capturePane = nil
     }
     descriptor = nil
@@ -680,40 +667,40 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     ) { [weak self, weak pane] _ in
       MainActor.assumeIsolated {
         guard let self, let pane else { return }
-        pane.markOverlay.viewportDidChange()
+        pane.portalOverlay.viewportDidChange()
         if self.activePane !== pane { return }
         self.scheduleReadingPositionSave()
       }
     }
   }
 
-  private func loadMarks() {
+  private func loadPortals() {
     do {
-      marks = try markRepository.load()
+      portals = try portalRepository.load()
       for pane in panes {
-        pane.markOverlay.marks = marks
+        pane.portalOverlay.portals = portals
       }
     } catch {
-      marks = []
+      portals = []
       for pane in panes {
-        pane.markOverlay.marks = []
+        pane.portalOverlay.portals = []
       }
       showError(
-        title: "Mark data could not be loaded",
-        message: "The invalid data was moved aside. New marks can still be created.")
+        title: "Portal data could not be loaded",
+        message: "The invalid data was moved aside. New portals can still be created.")
     }
   }
 
-  private func saveMarks() {
+  private func savePortals() {
     do {
-      try markRepository.save(marks)
+      try portalRepository.save(portals)
     } catch {
       showError(
-        title: "Mark could not be saved",
+        title: "Portal could not be saved",
         message: "It will remain available for this session only.")
     }
     for pane in panes {
-      pane.markOverlay.marks = marks
+      pane.portalOverlay.portals = portals
     }
   }
 
@@ -761,28 +748,40 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     persistCurrentReadingPosition()
   }
 
-  private func beginMarkCapture() {
-    guard descriptor != nil else {
-      showError(
-        title: "Open a PDF first", message: "Open a PDF, press m, then drag the source box.")
-      return
+  /// First `p` / portal: start source drag. After source is placed, press again to start destination drag.
+  private func advancePortalCapture() {
+    switch currentPortalCaptureMode() {
+    case .inactive:
+      guard descriptor != nil else {
+        showError(
+          title: "Open a PDF first",
+          message: "Open a PDF, press p, drag the source, press p again, then drag the destination.")
+        return
+      }
+      capturePane = activePane
+      portalDraft = nil
+      portalOverlay.captureMode = .source
+      hidePreview()
+      refreshPortalCaptureStatus()
+    case .sourcePlaced:
+      let pane = capturePane ?? activePane
+      capturePane = pane
+      pane.portalOverlay.captureMode = .destination
+      hidePreview()
+      refreshPortalCaptureStatus()
+    case .source, .destination:
+      NSSound.beep()
     }
-    guard markOverlay.captureMode == .inactive else { return }
-    capturePane = activePane
-    markDraft = nil
-    markOverlay.captureMode = .source
-    hidePreview()
-    refreshMarkCaptureStatus()
   }
 
-  private func capture(_ box: CapturedMarkBox) {
+  private func capture(_ box: CapturedPortalBox) {
     let pane = capturePane ?? activePane
     guard let descriptor = pane.descriptor ?? descriptor else {
       NSSound.beep()
       return
     }
-    let overlay = pane.markOverlay
-    let anchor = MarkAnchor(
+    let overlay = pane.portalOverlay
+    let anchor = PortalAnchor(
       documentFingerprint: descriptor.fingerprint,
       documentPath: descriptor.url.path,
       pageIndex: box.pageIndex,
@@ -791,41 +790,42 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     )
     switch overlay.captureMode {
     case .source:
-      markDraft = anchor
-      overlay.captureMode = .destination
-      refreshMarkCaptureStatus()
+      portalDraft = anchor
+      overlay.captureMode = .sourcePlaced
+      refreshPortalCaptureStatus()
     case .destination:
-      guard let source = markDraft else {
-        cancelMarkCapture()
+      guard let source = portalDraft else {
+        cancelPortalCapture()
         return
       }
-      marks.append(Mark(source: source, destination: anchor))
-      markDraft = nil
+      portals.append(Portal(source: source, destination: anchor))
+      portalDraft = nil
       overlay.captureMode = .inactive
       capturePane = nil
-      saveMarks()
-      filenameLabel.stringValue = "Mark created · \(marks.count) total"
+      savePortals()
+      filenameLabel.stringValue = "Portal created · \(portals.count) total"
+      portalPhaseIndicator.mode = .inactive
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        self.markOverlay.refreshInteractions()
+        self.portalOverlay.refreshInteractions()
         self.window?.makeFirstResponder(self.pdfView)
       }
-    case .inactive:
+    case .inactive, .sourcePlaced:
       break
     }
   }
 
-  private func cancelMarkCapture() {
+  private func cancelPortalCapture() {
     guard
-      let overlay = capturePane?.markOverlay
-        ?? panes.map(\.markOverlay).first(where: {
-          $0.captureMode != .inactive
+      let overlay = capturePane?.portalOverlay
+        ?? panes.map(\.portalOverlay).first(where: {
+          $0.captureMode.isActive
         })
     else { return }
-    markDraft = nil
+    portalDraft = nil
     overlay.captureMode = .inactive
     capturePane = nil
-    refreshMarkCaptureStatus()
+    refreshPortalCaptureStatus()
   }
 
   private func clearSearch() {
@@ -839,9 +839,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
-  private func cancelMarkOrSearch() {
-    if currentMarkCaptureMode() != .inactive {
-      cancelMarkCapture()
+  private func cancelPortalOrSearch() {
+    if currentPortalCaptureMode().isActive {
+      cancelPortalCapture()
       return
     }
     if !searchPrompt.isHidden {
@@ -852,48 +852,52 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     clearSearch()
   }
 
-  private func currentMarkCaptureMode() -> MarkCaptureMode {
-    if let mode = capturePane?.markOverlay.captureMode, mode != .inactive {
+  private func currentPortalCaptureMode() -> PortalCaptureMode {
+    if let mode = capturePane?.portalOverlay.captureMode, mode.isActive {
       return mode
     }
-    return panes.map(\.markOverlay.captureMode).first(where: { $0 != .inactive }) ?? .inactive
+    return panes.map(\.portalOverlay.captureMode).first(where: \.isActive) ?? .inactive
   }
 
-  private func refreshMarkCaptureStatus() {
-    switch currentMarkCaptureMode() {
+  private func refreshPortalCaptureStatus() {
+    let mode = currentPortalCaptureMode()
+    portalPhaseIndicator.mode = mode
+    switch mode {
     case .source:
-      filenameLabel.stringValue = "Mark source · drag a box · Esc cancels"
+      filenameLabel.stringValue = "Portal source · drag a box · Esc cancels"
+    case .sourcePlaced:
+      filenameLabel.stringValue = "Source set · press p again for destination · Esc cancels"
     case .destination:
       filenameLabel.stringValue =
-        "Mark destination · navigate, :q / home, or open a PDF, then drag a box"
+        "Portal destination · drag a box · Esc cancels"
     case .inactive:
       filenameLabel.stringValue = descriptor?.name ?? "No document open"
     }
   }
 
-  private func deleteMark(_ id: UUID) {
-    marks.removeAll { $0.id == id }
-    if hoveredMarkID == id { hidePreview() }
-    saveMarks()
+  private func deletePortal(_ id: UUID) {
+    portals.removeAll { $0.id == id }
+    if hoveredPortalID == id { hidePreview() }
+    savePortals()
   }
 
-  private func hover(_ target: MarkInteractionTarget?, from overlay: MarkOverlayView) {
+  private func hover(_ target: PortalInteractionTarget?, from overlay: PortalOverlayView) {
     hoverWorkItem?.cancel()
     guard let target else {
       hidePreview()
       return
     }
-    let mark = target.mark
+    let portal = target.portal
     let previewAnchor =
-      target.endpoint == .source ? mark.destination : mark.source
-    hoveredMarkID = mark.id
+      target.endpoint == .source ? portal.destination : portal.source
+    hoveredPortalID = portal.id
     hoveredEndpoint = target.endpoint
     let title =
       "\(URL(fileURLWithPath: previewAnchor.documentPath).lastPathComponent) · page \(previewAnchor.pageIndex + 1)"
     previewCard.showLoading(title: title)
     placePreview(beside: target.rect, from: overlay)
     let work = DispatchWorkItem { [weak self] in
-      guard let self, self.hoveredMarkID == mark.id,
+      guard let self, self.hoveredPortalID == portal.id,
         self.hoveredEndpoint == target.endpoint
       else { return }
       let appearance =
@@ -907,7 +911,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         appearance: appearance
       )
       self.previewRenderer.render(anchor: previewAnchor, key: key) { [weak self] result in
-        guard let self, self.hoveredMarkID == mark.id,
+        guard let self, self.hoveredPortalID == portal.id,
           self.hoveredEndpoint == target.endpoint
         else { return }
         switch result {
@@ -924,12 +928,12 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private func hidePreview() {
     hoverWorkItem?.cancel()
     hoverWorkItem = nil
-    hoveredMarkID = nil
+    hoveredPortalID = nil
     hoveredEndpoint = nil
     previewCard.isHidden = true
   }
 
-  private func placePreview(beside overlayRect: NSRect, from overlay: MarkOverlayView) {
+  private func placePreview(beside overlayRect: NSRect, from overlay: PortalOverlayView) {
     let source = rootView.convert(overlayRect, from: overlay)
     let size = NSSize(width: 440, height: 300)
     var x = source.maxX + 12
@@ -940,9 +944,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     previewCard.frame = NSRect(origin: NSPoint(x: x, y: y), size: size)
   }
 
-  private func activate(_ interaction: MarkInteractionTarget) {
+  private func activate(_ interaction: PortalInteractionTarget) {
     hidePreview()
-    let target = interaction.mark.oppositeAnchor(from: interaction.endpoint)
+    let target = interaction.portal.oppositeAnchor(from: interaction.endpoint)
     if let matching = panes.first(where: {
       $0.descriptor?.fingerprint == target.documentFingerprint
     }) {
@@ -971,16 +975,16 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
-  private func activate(_ mark: MarkListEntry) {
-    marksView.dismiss()
-    guard descriptor?.fingerprint == mark.anchor.documentFingerprint else { return }
+  private func activate(_ portal: PortalListEntry) {
+    portalsView.dismiss()
+    guard descriptor?.fingerprint == portal.anchor.documentFingerprint else { return }
     recordCurrentBeforeJump()
-    pdfView.go(to: mark.anchor, scale: pdfView.scaleFactor)
-    flashArrival(mark.anchor)
+    pdfView.go(to: portal.anchor, scale: pdfView.scaleFactor)
+    flashArrival(portal.anchor)
   }
 
   private func showCommandPalette() {
-    marksView.dismiss()
+    portalsView.dismiss()
     searchPrompt.dismiss()
     hidePreview()
     commandPalette.present()
@@ -988,18 +992,18 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
 
   private func showSearchPrompt(direction: SearchPromptView.Direction) {
     commandPalette.dismiss()
-    marksView.dismiss()
+    portalsView.dismiss()
     hidePreview()
     searchPrompt.present(direction: direction, initialQuery: lastSearchQuery)
   }
 
-  private func showMarks() {
+  private func showPortals() {
     commandPalette.dismiss()
     searchPrompt.dismiss()
     hidePreview()
     let entries =
-      descriptor.map { MarksIndex.entries(for: $0.fingerprint, marks: marks) } ?? []
-    marksView.present(entries: entries)
+      descriptor.map { PortalsIndex.entries(for: $0.fingerprint, portals: portals) } ?? []
+    portalsView.present(entries: entries)
   }
 
   private func performSearch(
@@ -1085,14 +1089,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       showError(title: "Open a PDF first", message: "Open a PDF before creating a split.")
       return
     }
-    guard panes.allSatisfy({ $0.markOverlay.captureMode == .inactive }) else {
-      showError(title: "Finish the current mark", message: "Complete or cancel mark capture first.")
+    guard panes.allSatisfy({ !$0.portalOverlay.captureMode.isActive }) else {
+      showError(title: "Finish the current portal", message: "Complete or cancel portal capture first.")
       return
     }
 
     let sourceDescriptor = sourcePane.descriptor ?? descriptor
     let fingerprint =
-      sourceDescriptor?.fingerprint ?? sourcePane.markOverlay.documentFingerprint ?? "pending"
+      sourceDescriptor?.fingerprint ?? sourcePane.portalOverlay.documentFingerprint ?? "pending"
     let path = sourceDescriptor?.url.path ?? document.documentURL?.path ?? ""
     let location = sourcePane.pdfView.currentJumpLocation(fingerprint: fingerprint, path: path)
     let targetPane: ReaderPaneView
@@ -1113,8 +1117,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     targetPane.pdfView.document = document
     targetPane.pdfView.autoScales = false
     targetPane.pdfView.scaleFactor = sourcePane.pdfView.scaleFactor
-    targetPane.markOverlay.documentFingerprint = fingerprint
-    targetPane.markOverlay.marks = marks
+    targetPane.portalOverlay.documentFingerprint = fingerprint
+    targetPane.portalOverlay.portals = portals
     activatePane(targetPane)
     finalizeSplitLayout(
       target: targetPane, location: location, vertical: vertical, attempt: 0)
@@ -1138,7 +1142,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     if let location {
       target.pdfView.restore(location)
     }
-    target.markOverlay.viewportDidChange()
+    target.portalOverlay.viewportDidChange()
     installScrollObservation(in: target)
     activatePane(target)
 
@@ -1161,9 +1165,9 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     persistCurrentReadingPosition()
     hidePreview()
     if !commandPalette.isHidden { commandPalette.dismiss() }
-    if !marksView.isHidden { marksView.dismiss() }
+    if !portalsView.isHidden { portalsView.dismiss() }
 
-    let pendingCapture = currentMarkCaptureMode()
+    let pendingCapture = currentPortalCaptureMode()
     let closingPrimary = activePane === primaryPane
     if closingPrimary {
       primaryPane.descriptor = secondary.descriptor
@@ -1171,14 +1175,14 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       primaryPane.pdfView.document = secondary.pdfView.document
       primaryPane.pdfView.autoScales = secondary.pdfView.autoScales
       primaryPane.pdfView.scaleFactor = secondary.pdfView.scaleFactor
-      primaryPane.markOverlay.documentFingerprint = secondary.markOverlay.documentFingerprint
-      primaryPane.markOverlay.marks = marks
+      primaryPane.portalOverlay.documentFingerprint = secondary.portalOverlay.documentFingerprint
+      primaryPane.portalOverlay.portals = portals
       if let secondaryDescriptor = secondary.descriptor,
         let location = secondary.pdfView.currentJumpLocation(descriptor: secondaryDescriptor)
       {
         primaryPane.pdfView.restore(location)
       }
-      primaryPane.markOverlay.viewportDidChange()
+      primaryPane.portalOverlay.viewportDidChange()
     }
 
     if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
@@ -1186,18 +1190,18 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
     secondary.descriptor = nil
     secondary.openGeneration = UUID()
-    secondary.markOverlay.captureMode = .inactive
+    secondary.portalOverlay.captureMode = .inactive
     secondary.pdfView.document = nil
     secondary.removeFromSuperview()
     secondaryPane = nil
     if pendingCapture != .inactive {
-      primaryPane.markOverlay.captureMode = pendingCapture
+      primaryPane.portalOverlay.captureMode = pendingCapture
       capturePane = primaryPane
     } else {
       capturePane = nil
     }
     activatePane(primaryPane)
-    refreshMarkCaptureStatus()
+    refreshPortalCaptureStatus()
   }
 
   private enum SplitFocusDirection {
@@ -1229,7 +1233,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     activatePane(target)
   }
 
-  private func resolveURL(for anchor: MarkAnchor, completion: @escaping (URL) -> Void) {
+  private func resolveURL(for anchor: PortalAnchor, completion: @escaping (URL) -> Void) {
     let url = URL(fileURLWithPath: anchor.documentPath)
     guard FileManager.default.fileExists(atPath: url.path) else {
       locate(anchor: anchor, completion: completion)
@@ -1244,7 +1248,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
-  private func locate(anchor: MarkAnchor, completion: ((URL) -> Void)? = nil) {
+  private func locate(anchor: PortalAnchor, completion: ((URL) -> Void)? = nil) {
     let panel = NSOpenPanel()
     panel.message = "Locate \(URL(fileURLWithPath: anchor.documentPath).lastPathComponent)"
     panel.allowedContentTypes = [.pdf]
@@ -1259,20 +1263,20 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         guard matches else {
           self.showError(
             title: "Different PDF",
-            message: "The selected file does not match this mark destination.")
+            message: "The selected file does not match this portal destination.")
           return
         }
-        self.marks = self.marks.map {
+        self.portals = self.portals.map {
           $0.replacingDocumentPath(for: anchor.documentFingerprint, with: url.path)
         }
-        self.saveMarks()
+        self.savePortals()
         completion?(url)
       }
     }
   }
 
-  private func flashArrival(_ anchor: MarkAnchor) {
-    let overlay = markOverlay
+  private func flashArrival(_ anchor: PortalAnchor) {
+    let overlay = portalOverlay
     overlay.arrivalAnchorID = anchor.id
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak overlay] in
       if overlay?.arrivalAnchorID == anchor.id {
@@ -1312,8 +1316,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       findAgain(opposite: false)
     case .findPrevious:
       findAgain(opposite: true)
-    case .showMarks:
-      showMarks()
+    case .showPortals:
+      showPortals()
     case .showHome:
       returnToHome()
     case .verticalSplit:
@@ -1332,8 +1336,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       focusSplit(direction: .down)
     case .quit:
       returnToHome()
-    case .cancelMark:
-      cancelMarkOrSearch()
+    case .cancelPortal:
+      cancelPortalOrSearch()
     case .jumpBackward:
       let current = currentJumpListLocation()
       guard let target = jumpList.goBackward(from: current) else { return }
@@ -1415,7 +1419,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       return
     }
 
-    let anchor = MarkAnchor(
+    let anchor = PortalAnchor(
       documentFingerprint: location.documentFingerprint,
       documentPath: location.documentPath,
       pageIndex: location.pageIndex,
@@ -1474,7 +1478,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     let page = pdfView.currentPage.map { document.index(for: $0) + 1 } ?? 1
     pageLabel.stringValue = "\(page) / \(document.pageCount)"
     scaleLabel.stringValue = "\(Int((pdfView.scaleFactor * 100).rounded()))%"
-    markOverlay.needsDisplay = true
+    portalOverlay.needsDisplay = true
   }
 
   @objc private func openPressed(_ sender: Any?) { presentOpenPanel() }
@@ -1501,11 +1505,11 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       gg / G  Start / end      [ ]  Previous / next page
       + −     Zoom             0  Fit width
       / ?     Search forward / back    n N  Next / previous match
-      ⌘F      Toolbar search   m  Create box mark
-      ⌃O / ⌃I Back / forward jump     Esc  Cancel mark / clear search
-      ⌃Hover  Preview mark     ⌃Click  Follow mark
+      ⌘F      Toolbar search   p  Create portal
+      ⌃O / ⌃I Back / forward jump     Esc  Cancel portal / clear search
+      ⌃Hover  Preview portal   ⌃Click  Follow portal
       :       Fuzzy commands   :help  This shortcut list
-      :marks  List marks       :N  Go to page N
+      :portals  List portals     :N  Go to page N
       :vsplit Side-by-side PDF :hsplit Top/bottom PDF
       :home   Recent PDFs home :q / :qa  Close view / go home
       ⌃h ⌃j ⌃k ⌃l  Focus left/down/up/right split

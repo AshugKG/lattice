@@ -16,8 +16,10 @@
     "native:mupdf": "cargo run --manifest-path native/Cargo.toml --",
     "native:mupdf:build": "cargo build --manifest-path native/Cargo.toml",
     "native:mupdf:test": "cargo test --manifest-path native/Cargo.toml",
-    "format": "xcrun swift-format format --in-place --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift",
-    "format:check": "xcrun swift-format lint --strict --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift",
+    "format": "xcrun swift-format format --in-place --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift ios/Lattice/Sources",
+    "format:check": "xcrun swift-format lint --strict --recursive macos/Lattice/Sources macos/Lattice/Tests macos/Lattice/Package.swift ios/Lattice/Sources",
+    "ios:generate": "xcodegen --spec ios/Lattice/project.yml",
+    "ios:build": "sh scripts/ios-build.sh",
     "check": "bun run format:check && bun run native:test && bun run native:build"
   }
 }

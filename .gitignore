@@ -4,6 +4,12 @@ node_modules/
 macos/**/.build/
 macos/**/.cache/
 macos/**/build/
+ios/**/.build/
+ios/**/.cache/
+ios/**/build/
+ios/**/*.o
+ios/**/*.xcodeproj/project.xcworkspace/xcuserdata/
+ios/**/*.xcodeproj/xcuserdata/
 
 # Logs
 *.log

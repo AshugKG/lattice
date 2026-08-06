@@ -1,15 +1,20 @@
 import Foundation
 
 /// External open-at-location request (e.g. from LeetMath).
+/// `topY` is normalized from the **top** of the page crop box (0 = top, 1 = bottom).
 public struct LaunchGoto: Equatable, Sendable {
   public let pageIndex: Int
-  public let bounds: NormalizedRect
+  public let topY: Double
   public let label: String?
 
-  public init(pageIndex: Int, bounds: NormalizedRect, label: String? = nil) {
+  public init(pageIndex: Int, topY: Double, label: String? = nil) {
     self.pageIndex = pageIndex
-    self.bounds = bounds
+    self.topY = topY
     self.label = label
+  }
+
+  public var isValid: Bool {
+    pageIndex >= 0 && topY.isFinite && topY >= 0 && topY <= 1
   }
 }
 
@@ -22,12 +27,12 @@ public struct LaunchArguments: Equatable, Sendable {
     self.goto = goto
   }
 
-  /// Parse `Lattice /path/book.pdf --page-index N --rect x,y,w,h [--label TEXT]`.
+  /// Parse `Lattice /path/book.pdf --page-index N --top 0.42 [--label TEXT]`.
   public static func parse(_ arguments: [String]) -> LaunchArguments {
     let args = Array(arguments.dropFirst())
     var pdfURL: URL?
     var pageIndex: Int?
-    var bounds: NormalizedRect?
+    var topY: Double?
     var label: String?
 
     var i = 0
@@ -38,13 +43,24 @@ public struct LaunchArguments: Equatable, Sendable {
         i += 2
         continue
       }
-      if arg == "--rect", i + 1 < args.count {
-        bounds = parseRect(args[i + 1])
+      if arg == "--top", i + 1 < args.count, let value = Double(args[i + 1]) {
+        topY = value
         i += 2
         continue
       }
       if arg == "--label", i + 1 < args.count {
         label = args[i + 1]
+        i += 2
+        continue
+      }
+      // Legacy --rect x,y,w,h → use y as topY
+      if arg == "--rect", i + 1 < args.count {
+        let parts = args[i + 1].split(separator: ",").map {
+          $0.trimmingCharacters(in: .whitespaces)
+        }
+        if parts.count == 4, let y = Double(parts[1]) {
+          topY = y
+        }
         i += 2
         continue
       }
@@ -59,22 +75,12 @@ public struct LaunchArguments: Equatable, Sendable {
     }
 
     let goto: LaunchGoto?
-    if let pageIndex, let bounds, bounds.isValid {
-      goto = LaunchGoto(pageIndex: pageIndex, bounds: bounds, label: label)
+    if let pageIndex, let topY {
+      let request = LaunchGoto(pageIndex: pageIndex, topY: topY, label: label)
+      goto = request.isValid ? request : nil
     } else {
       goto = nil
     }
     return LaunchArguments(pdfURL: pdfURL, goto: goto)
-  }
-
-  private static func parseRect(_ raw: String) -> NormalizedRect? {
-    let parts = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    guard parts.count == 4,
-      let x = Double(parts[0]),
-      let y = Double(parts[1]),
-      let w = Double(parts[2]),
-      let h = Double(parts[3])
-    else { return nil }
-    return NormalizedRect(x: x, y: y, width: w, height: h)
   }
 }

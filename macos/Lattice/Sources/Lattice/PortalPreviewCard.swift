@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class MarkPreviewCard: NSVisualEffectView {
+final class PortalPreviewCard: NSVisualEffectView {
   private let imageView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let messageLabel = NSTextField(labelWithString: "")

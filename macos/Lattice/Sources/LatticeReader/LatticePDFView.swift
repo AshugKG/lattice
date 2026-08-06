@@ -3,38 +3,38 @@ import LatticeCore
 import PDFKit
 
 @MainActor
-final class LatticePDFView: PDFView {
-  var onOpen: (() -> Void)?
-  var onHelp: (() -> Void)?
-  var onFind: (() -> Void)?
-  var onCaptureMark: (() -> Void)?
-  var onNonLocalCommand: ((ReaderCommand) -> Void)?
-  var onDropPDF: ((URL) -> Void)?
-  var onViewportChanged: (() -> Void)?
-  var onBecameActive: (() -> Void)?
-  var onWillFollowLink: (() -> Void)?
+public final class LatticePDFView: PDFView {
+  public var onOpen: (() -> Void)?
+  public var onHelp: (() -> Void)?
+  public var onFind: (() -> Void)?
+  public var onCapturePortal: (() -> Void)?
+  public var onNonLocalCommand: ((ReaderCommand) -> Void)?
+  public var onDropPDF: ((URL) -> Void)?
+  public var onViewportChanged: (() -> Void)?
+  public var onBecameActive: (() -> Void)?
+  public var onWillFollowLink: (() -> Void)?
 
   private var shortcutResolver = ShortcutResolver()
 
-  override init(frame frameRect: NSRect) {
+  public override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     registerForDraggedTypes([.fileURL])
   }
 
-  required init?(coder: NSCoder) {
+  public required init?(coder: NSCoder) {
     super.init(coder: coder)
     registerForDraggedTypes([.fileURL])
   }
 
-  override var acceptsFirstResponder: Bool { true }
+  public override var acceptsFirstResponder: Bool { true }
 
-  override func becomeFirstResponder() -> Bool {
+  public override func becomeFirstResponder() -> Bool {
     let accepted = super.becomeFirstResponder()
     if accepted { onBecameActive?() }
     return accepted
   }
 
-  override func mouseDown(with event: NSEvent) {
+  public override func mouseDown(with event: NSEvent) {
     window?.makeFirstResponder(self)
     onBecameActive?()
     let point = convert(event.locationInWindow, from: nil)
@@ -44,7 +44,7 @@ final class LatticePDFView: PDFView {
     super.mouseDown(with: event)
   }
 
-  override func keyDown(with event: NSEvent) {
+  public override func keyDown(with event: NSEvent) {
     if let command = resolveCommand(from: event) {
       execute(command)
       return
@@ -52,7 +52,7 @@ final class LatticePDFView: PDFView {
     super.keyDown(with: event)
   }
 
-  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+  public override func performKeyEquivalent(with event: NSEvent) -> Bool {
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
     guard flags.contains(.control) || flags.contains(.command) else {
       return super.performKeyEquivalent(with: event)
@@ -64,31 +64,31 @@ final class LatticePDFView: PDFView {
     return super.performKeyEquivalent(with: event)
   }
 
-  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+  public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
     droppedPDFURL(from: sender) == nil ? [] : .copy
   }
 
-  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+  public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
     guard let url = droppedPDFURL(from: sender) else { return false }
     onDropPDF?(url)
     return true
   }
 
-  override func scrollWheel(with event: NSEvent) {
+  public override func scrollWheel(with event: NSEvent) {
     window?.makeFirstResponder(self)
     onBecameActive?()
     super.scrollWheel(with: event)
     onViewportChanged?()
   }
 
-  override func magnify(with event: NSEvent) {
+  public override func magnify(with event: NSEvent) {
     window?.makeFirstResponder(self)
     onBecameActive?()
     super.magnify(with: event)
     onViewportChanged?()
   }
 
-  func execute(_ command: ReaderCommand) {
+  public func execute(_ command: ReaderCommand) {
     switch command {
     case .open: onOpen?()
     case .help: onHelp?()
@@ -101,7 +101,7 @@ final class LatticePDFView: PDFView {
     case .halfUp: scrollBy(x: 0, y: -(scrollView?.contentView.bounds.height ?? 400) / 2)
     case .documentStart, .documentEnd, .nextPage, .previousPage, .goToPage, .findForward,
       .findBackward, .findNext, .findPrevious, .jumpBackward, .jumpForward, .showCommandPalette,
-      .showMarks, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .focusLeft, .focusRight,
+      .showPortals, .showHome, .verticalSplit, .horizontalSplit, .closeSplit, .focusLeft, .focusRight,
       .focusUp, .focusDown, .quit:
       onNonLocalCommand?(command)
     case .zoomIn:
@@ -111,15 +111,15 @@ final class LatticePDFView: PDFView {
       autoScales = false
       scaleFactor = max(minScaleFactor, scaleFactor - 0.15)
     case .fitWidth: autoScales = true
-    case .captureMark: onCaptureMark?()
-    case .cancelMark: onNonLocalCommand?(command)
+    case .capturePortal: onCapturePortal?()
+    case .cancelPortal: onNonLocalCommand?(command)
     }
   }
 
   /// Caret-like selection at the visible viewport edge, for Vim-style find-from-here.
   /// PDFKit's `findString(fromSelection:)` ignores invalid origins and starts at the document edge,
   /// so this must return a real page selection even when the point lands in whitespace.
-  func searchOriginSelection(backward: Bool) -> PDFSelection? {
+  public func searchOriginSelection(backward: Bool) -> PDFSelection? {
     guard let document else { return nil }
     let viewPoint = NSPoint(
       x: bounds.midX,
@@ -198,11 +198,11 @@ final class LatticePDFView: PDFView {
     return false
   }
 
-  func currentJumpLocation(descriptor: DocumentDescriptor) -> JumpLocation? {
+  public func currentJumpLocation(descriptor: DocumentDescriptor) -> JumpLocation? {
     currentJumpLocation(fingerprint: descriptor.fingerprint, path: descriptor.url.path)
   }
 
-  func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
+  public func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
     guard let document, let page = currentPage else { return nil }
     let viewCenter = NSPoint(x: bounds.midX, y: bounds.midY)
     let centerPage = self.page(for: viewCenter, nearest: true) ?? page
@@ -221,19 +221,19 @@ final class LatticePDFView: PDFView {
     )
   }
 
-  func go(to anchor: MarkAnchor, scale: CGFloat? = nil) {
+  public func go(to anchor: PortalAnchor, scale: CGFloat? = nil) {
     guard let document, let page = document.page(at: anchor.pageIndex) else { return }
     if let scale {
       autoScales = false
       scaleFactor = min(maxScaleFactor, max(minScaleFactor, scale))
     }
     let box = page.bounds(for: .cropBox)
-    guard let target = MarkGeometry.pageRect(for: anchor.bounds, in: box) else { return }
+    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return }
     center(pagePoint: NSPoint(x: target.midX, y: target.midY), on: page)
     onViewportChanged?()
   }
 
-  func restore(_ location: JumpLocation) {
+  public func restore(_ location: JumpLocation) {
     guard let document, let page = document.page(at: location.pageIndex) else { return }
     autoScales = false
     scaleFactor = min(maxScaleFactor, max(minScaleFactor, location.scaleFactor))
@@ -246,7 +246,53 @@ final class LatticePDFView: PDFView {
     onViewportChanged?()
   }
 
-  var scrollView: NSScrollView? {
+  /// Scroll so a normalized top-of-page Y (0 = top, 1 = bottom) sits near the viewport top.
+  public func scrollProblemToTop(pageIndex: Int, topY: Double) {
+    guard let document, let page = document.page(at: pageIndex) else { return }
+    let box = page.bounds(for: .cropBox)
+    let clamped = min(1, max(0, topY))
+    // Indexer / CLI use top-origin; PDFKit crop box is bottom-origin.
+    let pagePoint = NSPoint(
+      x: box.midX,
+      y: box.minY + box.height * (1 - clamped)
+    )
+    go(to: PDFDestination(page: page, at: pagePoint))
+    DispatchQueue.main.async { [weak self, weak page] in
+      guard let self, let page else { return }
+      self.alignVisibleTop(pagePoint: pagePoint, on: page)
+      self.onViewportChanged?()
+    }
+  }
+
+  private func alignVisibleTop(pagePoint: NSPoint, on page: PDFPage) {
+    guard let scrollView, let documentView = scrollView.documentView else { return }
+    layoutSubtreeIfNeeded()
+    documentView.layoutSubtreeIfNeeded()
+    let pointInPDFView = convert(pagePoint, from: page)
+    let pointInDocument = documentView.convert(pointInPDFView, from: self)
+    let clip = scrollView.contentView
+    let padding: CGFloat = 16
+    let proposed: NSRect
+    if clip.isFlipped {
+      proposed = NSRect(
+        x: pointInDocument.x - clip.bounds.width / 2,
+        y: pointInDocument.y - padding,
+        width: clip.bounds.width,
+        height: clip.bounds.height
+      )
+    } else {
+      proposed = NSRect(
+        x: pointInDocument.x - clip.bounds.width / 2,
+        y: pointInDocument.y - clip.bounds.height + padding,
+        width: clip.bounds.width,
+        height: clip.bounds.height
+      )
+    }
+    clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
+    scrollView.reflectScrolledClipView(clip)
+  }
+
+  public var scrollView: NSScrollView? {
     descendants(of: self).compactMap { $0 as? NSScrollView }.first
   }
 

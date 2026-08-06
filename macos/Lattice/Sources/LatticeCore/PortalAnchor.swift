@@ -29,12 +29,12 @@ public struct NormalizedRect: Codable, Equatable, Hashable, Sendable {
   }
 }
 
-public enum MarkEndpoint: String, Codable, Equatable, Hashable, Sendable {
+public enum PortalEndpoint: String, Codable, Equatable, Hashable, Sendable {
   case source
   case destination
 }
 
-public struct MarkAnchor: Codable, Equatable, Identifiable, Sendable {
+public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public let documentFingerprint: String
   public let documentPath: String
@@ -58,8 +58,8 @@ public struct MarkAnchor: Codable, Equatable, Identifiable, Sendable {
     self.quotedText = quotedText
   }
 
-  public func replacingDocumentPath(_ path: String) -> MarkAnchor {
-    MarkAnchor(
+  public func replacingDocumentPath(_ path: String) -> PortalAnchor {
+    PortalAnchor(
       id: id,
       documentFingerprint: documentFingerprint,
       documentPath: path,
@@ -70,16 +70,16 @@ public struct MarkAnchor: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-public struct Mark: Codable, Equatable, Identifiable, Sendable {
+public struct Portal: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
-  public let source: MarkAnchor
-  public let destination: MarkAnchor
+  public let source: PortalAnchor
+  public let destination: PortalAnchor
   public let createdAt: Date
 
   public init(
     id: UUID = UUID(),
-    source: MarkAnchor,
-    destination: MarkAnchor,
+    source: PortalAnchor,
+    destination: PortalAnchor,
     createdAt: Date = Date()
   ) {
     self.id = id
@@ -89,8 +89,8 @@ public struct Mark: Codable, Equatable, Identifiable, Sendable {
     self.createdAt = Date(timeIntervalSince1970: milliseconds / 1_000)
   }
 
-  public func replacingDocumentPath(for fingerprint: String, with path: String) -> Mark {
-    Mark(
+  public func replacingDocumentPath(for fingerprint: String, with path: String) -> Portal {
+    Portal(
       id: id,
       source: source.documentFingerprint == fingerprint
         ? source.replacingDocumentPath(path) : source,
@@ -100,24 +100,46 @@ public struct Mark: Codable, Equatable, Identifiable, Sendable {
     )
   }
 
-  public func anchor(at endpoint: MarkEndpoint) -> MarkAnchor {
+  public func anchor(at endpoint: PortalEndpoint) -> PortalAnchor {
     endpoint == .source ? source : destination
   }
 
-  public func oppositeAnchor(from endpoint: MarkEndpoint) -> MarkAnchor {
+  public func oppositeAnchor(from endpoint: PortalEndpoint) -> PortalAnchor {
     endpoint == .source ? destination : source
   }
 }
 
-public struct MarkFile: Codable, Equatable, Sendable {
+public struct PortalFile: Codable, Equatable, Sendable {
   public static let currentSchemaVersion = 1
 
   public let schemaVersion: Int
-  public var marks: [Mark]
+  public var portals: [Portal]
 
-  public init(schemaVersion: Int = currentSchemaVersion, marks: [Mark]) {
+  public init(schemaVersion: Int = currentSchemaVersion, portals: [Portal]) {
     self.schemaVersion = schemaVersion
-    self.marks = marks
+    self.portals = portals
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case portals
+    case marks
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+    if let portals = try container.decodeIfPresent([Portal].self, forKey: .portals) {
+      self.portals = portals
+    } else {
+      self.portals = try container.decode([Portal].self, forKey: .marks)
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(portals, forKey: .portals)
   }
 }
 

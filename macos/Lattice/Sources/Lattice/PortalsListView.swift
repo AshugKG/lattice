@@ -2,14 +2,14 @@ import AppKit
 import LatticeCore
 
 @MainActor
-final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableViewDelegate {
-  var onActivate: ((MarkListEntry) -> Void)?
+final class PortalsListView: NSVisualEffectView, NSTableViewDataSource, NSTableViewDelegate {
+  var onActivate: ((PortalListEntry) -> Void)?
   var onDismiss: (() -> Void)?
 
-  private let titleLabel = NSTextField(labelWithString: "Marks")
+  private let titleLabel = NSTextField(labelWithString: "Portals")
   private let tableView = NSTableView()
-  private let emptyLabel = NSTextField(labelWithString: "No marks in this PDF")
-  private var entries: [MarkListEntry] = []
+  private let emptyLabel = NSTextField(labelWithString: "No portals in this PDF")
+  private var entries: [PortalListEntry] = []
   private var keyMonitor: Any?
 
   override init(frame frameRect: NSRect) {
@@ -33,7 +33,7 @@ final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableVie
     hint.textColor = .secondaryLabelColor
     hint.translatesAutoresizingMaskIntoConstraints = false
 
-    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("mark"))
+    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("portal"))
     column.resizingMask = .autoresizingMask
     tableView.addTableColumn(column)
     tableView.headerView = nil
@@ -76,7 +76,7 @@ final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableVie
 
   required init?(coder: NSCoder) { nil }
 
-  func present(entries: [MarkListEntry]) {
+  func present(entries: [PortalListEntry]) {
     self.entries = entries
     titleLabel.stringValue = "Marks · \(entries.count)"
     tableView.reloadData()
@@ -111,17 +111,17 @@ final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableVie
     let counterpartName = URL(fileURLWithPath: entry.counterpart.documentPath).lastPathComponent
     let headline =
       "p. \(entry.anchor.pageIndex + 1)  \(direction)  \(counterpartName) · p. \(entry.counterpart.pageIndex + 1)"
-    let snippet = entry.anchor.quotedText ?? entry.counterpart.quotedText ?? "Mark snippet"
+    let snippet = entry.anchor.quotedText ?? entry.counterpart.quotedText ?? "Portal snippet"
     cell.textField?.stringValue =
       "\(headline)\n\(snippet.replacingOccurrences(of: "\n", with: " "))"
     return cell
   }
 
   @objc private func activateSelection(_ sender: Any?) {
-    activateSelectedMark()
+    activateSelectedPortal()
   }
 
-  private func activateSelectedMark() {
+  private func activateSelectedPortal() {
     guard entries.indices.contains(tableView.selectedRow) else { return }
     let entry = entries[tableView.selectedRow]
     stopKeyMonitor()
@@ -136,7 +136,7 @@ final class MarksListView: NSVisualEffectView, NSTableViewDataSource, NSTableVie
       case 36, 76:
         Task { @MainActor [weak self] in
           guard let self, !self.isHidden else { return }
-          self.activateSelectedMark()
+          self.activateSelectedPortal()
         }
         return nil
       case 53:
