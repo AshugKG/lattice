@@ -1,10 +1,13 @@
 import AppKit
+import LatticeCore
 import PDFKit
 
 @MainActor
 final class ReaderPaneView: NSView {
   let pdfView = LatticePDFView()
   let markOverlay = MarkOverlayView()
+  var descriptor: DocumentDescriptor?
+  var openGeneration = UUID()
 
   var showsActiveChrome = false {
     didSet { updateActiveChrome() }

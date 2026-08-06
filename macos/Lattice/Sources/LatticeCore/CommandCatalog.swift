@@ -41,7 +41,8 @@ public enum CommandCatalog {
       name: "qa", aliases: ["quitall"], summary: "Close all views and go home", shortcut: ":qa",
       action: .quit),
     .init(
-      name: "open", aliases: ["edit", "e"], summary: "Open a PDF", shortcut: "o", action: .open),
+      name: "open", aliases: ["edit", "e"], summary: "Open a PDF in the active pane",
+      shortcut: "o", action: .open),
     .init(
       name: "find", aliases: ["search"], summary: "Search forward in this PDF", shortcut: "/",
       action: .findForward),

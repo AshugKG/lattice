@@ -41,7 +41,6 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private var jumpList = JumpList()
   private var observers: [NSObjectProtocol] = []
   private var scrollBoundsObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
-  private var fingerprintGeneration = UUID()
   private var hoverWorkItem: DispatchWorkItem?
   private var readingSaveWorkItem: DispatchWorkItem?
   private var hoveredMarkID: UUID?
@@ -115,6 +114,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     hidePreview()
     hideHome()
 
+    let targetPane = activePane
     let pageCount = document.pageCount
     let knownFingerprint = readingPositions.first(where: {
       $0.value.location.documentPath == url.path
@@ -126,46 +126,41 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       name: url.lastPathComponent,
       pageCount: pageCount
     )
+    let generation = UUID()
+    targetPane.openGeneration = generation
+    targetPane.descriptor = provisional
     descriptor = provisional
-    for pane in panes {
-      pane.markOverlay.documentFingerprint = provisional.fingerprint
-      pane.markOverlay.marks = marks
-      pane.pdfView.document = document
-      pane.pdfView.autoScales = true
-      installScrollObservation(in: pane)
-    }
+    targetPane.markOverlay.documentFingerprint = provisional.fingerprint
+    targetPane.markOverlay.marks = marks
+    targetPane.pdfView.document = document
+    targetPane.pdfView.autoScales = true
+    installScrollObservation(in: targetPane)
     if pendingCapture != .inactive {
-      primaryPane.markOverlay.captureMode = pendingCapture
-      capturePane = primaryPane
-      for pane in panes where pane !== primaryPane {
+      targetPane.markOverlay.captureMode = pendingCapture
+      capturePane = targetPane
+      for pane in panes where pane !== targetPane {
         pane.markOverlay.captureMode = .inactive
       }
     }
-    DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
-      for pane in self.panes {
-        self.installScrollObservation(in: pane)
-      }
+    DispatchQueue.main.async { [weak self, weak targetPane] in
+      guard let self, let targetPane else { return }
+      self.installScrollObservation(in: targetPane)
     }
     window?.title = "\(url.lastPathComponent) — Lattice"
     updatePageAndScale()
-    activatePane(activePane)
+    activatePane(targetPane)
     refreshMarkCaptureStatus()
 
     if resumeReadingPosition, let saved = readingPositions[provisional.fingerprint] {
       let location = saved.location.clamped(pageCount: pageCount)
-      for pane in panes {
-        pane.pdfView.restore(location)
-      }
+      targetPane.pdfView.restore(location)
     }
 
-    let generation = UUID()
-    fingerprintGeneration = generation
-    Task { [weak self] in
+    Task { [weak self, weak targetPane] in
       let fingerprint = await Task.detached(priority: .utility) {
         try? DocumentFingerprint.sha256(of: url)
       }.value
-      guard let self else { return }
+      guard let self, let targetPane else { return }
       let resolvedFingerprint = fingerprint ?? "\(url.lastPathComponent):\(pageCount)"
       let descriptor = DocumentDescriptor(
         fingerprint: resolvedFingerprint,
@@ -173,15 +168,16 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         name: url.lastPathComponent,
         pageCount: pageCount
       )
-      guard self.fingerprintGeneration == generation else {
+      guard targetPane.openGeneration == generation else {
         completion?(descriptor)
         return
       }
-      self.descriptor = descriptor
-      for pane in self.panes {
-        pane.markOverlay.documentFingerprint = descriptor.fingerprint
-        pane.markOverlay.marks = self.marks
+      targetPane.descriptor = descriptor
+      if self.activePane === targetPane {
+        self.descriptor = descriptor
       }
+      targetPane.markOverlay.documentFingerprint = descriptor.fingerprint
+      targetPane.markOverlay.marks = self.marks
       if descriptor.fingerprint != provisionalFingerprint {
         self.jumpList.rewriteFingerprint(
           from: provisionalFingerprint,
@@ -208,11 +204,13 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
         let saved = self.readingPositions[descriptor.fingerprint]
       {
         let location = saved.location.clamped(pageCount: descriptor.pageCount)
-        for pane in self.panes {
-          pane.pdfView.restore(location)
-        }
+        targetPane.pdfView.restore(location)
       }
       self.recordRecent(descriptor)
+      if self.activePane === targetPane {
+        self.refreshMarkCaptureStatus()
+        self.window?.title = "\(descriptor.name) — Lattice"
+      }
       completion?(descriptor)
     }
   }
@@ -419,22 +417,37 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
 
   private func selectPane(_ pane: ReaderPaneView) {
     selectedPane = pane
+    descriptor = pane.descriptor
     let splitActive = secondaryPane != nil
     for candidate in panes {
       candidate.showsActiveChrome = splitActive
       candidate.setActivePane(candidate === pane)
     }
+    if let descriptor {
+      window?.title = "\(descriptor.name) — Lattice"
+    } else if homeView.isHidden {
+      window?.title = "Lattice"
+    }
     updatePageAndScale()
+    refreshMarkCaptureStatus()
   }
 
   private func activatePane(_ pane: ReaderPaneView) {
+    let captureMode = currentMarkCaptureMode()
+    if captureMode != .inactive, let previous = capturePane, previous !== pane {
+      previous.markOverlay.captureMode = .inactive
+      pane.markOverlay.captureMode = captureMode
+      capturePane = pane
+    }
     if selectedPane !== pane {
       selectPane(pane)
     } else {
+      descriptor = pane.descriptor
       let splitActive = secondaryPane != nil
       pane.showsActiveChrome = splitActive
       pane.setActivePane(true)
       updatePageAndScale()
+      refreshMarkCaptureStatus()
     }
     if window?.firstResponder !== pane.pdfView {
       window?.makeFirstResponder(pane.pdfView)
@@ -528,6 +541,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
         NotificationCenter.default.removeObserver(observer)
       }
+      secondary.descriptor = nil
+      secondary.openGeneration = UUID()
       secondary.markOverlay.captureMode = .inactive
       secondary.pdfView.document = nil
       secondary.removeFromSuperview()
@@ -535,6 +550,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
 
     for pane in panes {
+      pane.descriptor = nil
+      pane.openGeneration = UUID()
       pane.pdfView.document = nil
       pane.markOverlay.documentFingerprint = nil
       pane.markOverlay.marks = marks
@@ -551,7 +568,6 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       capturePane = nil
     }
     descriptor = nil
-    fingerprintGeneration = UUID()
     selectPane(primaryPane)
     showHome()
   }
@@ -679,7 +695,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   }
 
   private func scheduleReadingPositionSave() {
-    guard descriptor != nil else { return }
+    guard panes.contains(where: { $0.descriptor != nil }) else { return }
     readingSaveWorkItem?.cancel()
     let work = DispatchWorkItem { [weak self] in self?.persistCurrentReadingPosition() }
     readingSaveWorkItem = work
@@ -689,10 +705,15 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   func persistCurrentReadingPosition() {
     readingSaveWorkItem?.cancel()
     readingSaveWorkItem = nil
-    guard let descriptor, let location = pdfView.currentJumpLocation(descriptor: descriptor) else {
-      return
+    var didChange = false
+    for pane in panes {
+      guard let paneDescriptor = pane.descriptor,
+        let location = pane.pdfView.currentJumpLocation(descriptor: paneDescriptor)
+      else { continue }
+      readingPositions[paneDescriptor.fingerprint] = ReadingPosition(location: location)
+      didChange = true
     }
-    readingPositions[descriptor.fingerprint] = ReadingPosition(location: location)
+    guard didChange else { return }
     do {
       try readingStateRepository.save(readingPositions)
     } catch {
@@ -721,11 +742,12 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   }
 
   private func capture(_ box: CapturedMarkBox) {
-    guard let descriptor else {
+    let pane = capturePane ?? activePane
+    guard let descriptor = pane.descriptor ?? descriptor else {
       NSSound.beep()
       return
     }
-    let overlay = capturePane?.markOverlay ?? markOverlay
+    let overlay = pane.markOverlay
     let anchor = MarkAnchor(
       documentFingerprint: descriptor.fingerprint,
       documentPath: descriptor.url.path,
@@ -887,9 +909,12 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
   private func activate(_ interaction: MarkInteractionTarget) {
     hidePreview()
     let target = interaction.mark.oppositeAnchor(from: interaction.endpoint)
-    if descriptor?.fingerprint == target.documentFingerprint {
+    if let matching = panes.first(where: {
+      $0.descriptor?.fingerprint == target.documentFingerprint
+    }) {
       recordCurrentBeforeJump()
-      pdfView.go(to: target, scale: pdfView.scaleFactor)
+      activatePane(matching)
+      matching.pdfView.go(to: target, scale: matching.pdfView.scaleFactor)
       flashArrival(target)
       return
     }
@@ -1031,9 +1056,10 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       return
     }
 
+    let sourceDescriptor = sourcePane.descriptor ?? descriptor
     let fingerprint =
-      descriptor?.fingerprint ?? sourcePane.markOverlay.documentFingerprint ?? "pending"
-    let path = descriptor?.url.path ?? document.documentURL?.path ?? ""
+      sourceDescriptor?.fingerprint ?? sourcePane.markOverlay.documentFingerprint ?? "pending"
+    let path = sourceDescriptor?.url.path ?? document.documentURL?.path ?? ""
     let location = sourcePane.pdfView.currentJumpLocation(fingerprint: fingerprint, path: path)
     let targetPane: ReaderPaneView
     if let secondaryPane {
@@ -1048,6 +1074,8 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
 
     splitView.isVertical = vertical
+    targetPane.descriptor = sourceDescriptor
+    targetPane.openGeneration = sourcePane.openGeneration
     targetPane.pdfView.document = document
     targetPane.pdfView.autoScales = false
     targetPane.pdfView.scaleFactor = sourcePane.pdfView.scaleFactor
@@ -1096,24 +1124,34 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       return
     }
 
+    persistCurrentReadingPosition()
     hidePreview()
     if !commandPalette.isHidden { commandPalette.dismiss() }
     if !marksView.isHidden { marksView.dismiss() }
 
     let pendingCapture = currentMarkCaptureMode()
     let closingPrimary = activePane === primaryPane
-    if closingPrimary, let descriptor,
-      let location = secondary.pdfView.currentJumpLocation(descriptor: descriptor)
-    {
+    if closingPrimary {
+      primaryPane.descriptor = secondary.descriptor
+      primaryPane.openGeneration = secondary.openGeneration
       primaryPane.pdfView.document = secondary.pdfView.document
       primaryPane.pdfView.autoScales = secondary.pdfView.autoScales
-      primaryPane.pdfView.restore(location)
+      primaryPane.pdfView.scaleFactor = secondary.pdfView.scaleFactor
+      primaryPane.markOverlay.documentFingerprint = secondary.markOverlay.documentFingerprint
+      primaryPane.markOverlay.marks = marks
+      if let secondaryDescriptor = secondary.descriptor,
+        let location = secondary.pdfView.currentJumpLocation(descriptor: secondaryDescriptor)
+      {
+        primaryPane.pdfView.restore(location)
+      }
       primaryPane.markOverlay.viewportDidChange()
     }
 
     if let observer = scrollBoundsObservers.removeValue(forKey: ObjectIdentifier(secondary)) {
       NotificationCenter.default.removeObserver(observer)
     }
+    secondary.descriptor = nil
+    secondary.openGeneration = UUID()
     secondary.markOverlay.captureMode = .inactive
     secondary.pdfView.document = nil
     secondary.removeFromSuperview()
@@ -1307,11 +1345,13 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       completion?(true)
       return
     }
-    if let descriptor,
-      descriptor.fingerprint == location.documentFingerprint
-        || descriptor.url.path == location.documentPath
-    {
-      pdfView.restore(location)
+    if let matching = panes.first(where: {
+      guard let paneDescriptor = $0.descriptor else { return false }
+      return paneDescriptor.fingerprint == location.documentFingerprint
+        || paneDescriptor.url.path == location.documentPath
+    }) {
+      activatePane(matching)
+      matching.pdfView.restore(location)
       completion?(true)
       return
     }
