@@ -6,43 +6,67 @@ import UIKit
 @MainActor
 final class PDFController {
   weak var pdfView: PDFView?
+  private var restoreWorkItem: DispatchWorkItem?
+
+  func visiblePage(in pdfView: PDFView) -> PDFPage? {
+    let center = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.midY)
+    return pdfView.page(for: center, nearest: true) ?? pdfView.currentPage
+  }
 
   func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
-    guard let pdfView, let document = pdfView.document, let page = pdfView.currentPage else {
-      return nil
-    }
-    let viewCenter = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.midY)
-    let centerPage = pdfView.page(for: viewCenter, nearest: true) ?? page
-    let pagePoint = pdfView.convert(viewCenter, to: centerPage)
-    let box = centerPage.bounds(for: .cropBox)
+    guard let pdfView, let document = pdfView.document,
+      let page = visiblePage(in: pdfView)
+    else { return nil }
+    let box = page.bounds(for: .cropBox)
     guard box.width > 0, box.height > 0 else { return nil }
+
+    let visibleInPage = pdfView.convert(pdfView.bounds, to: page)
+    let visibleRect = PortalGeometry.normalized(rect: visibleInPage, in: box)
+
+    let viewCenter = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.midY)
+    let pagePoint = pdfView.convert(viewCenter, to: page)
     return JumpLocation(
       documentFingerprint: fingerprint,
       documentPath: path,
-      pageIndex: document.index(for: centerPage),
+      pageIndex: document.index(for: page),
       viewportCenter: NormalizedPoint(
         x: min(1, max(0, (pagePoint.x - box.minX) / box.width)),
         y: min(1, max(0, (pagePoint.y - box.minY) / box.height))
       ),
-      scaleFactor: Double(pdfView.scaleFactor)
+      scaleFactor: Double(pdfView.scaleFactor),
+      visibleRect: visibleRect
     )
   }
 
+  /// Restore exact viewport via PDFKit `go(to:on:)` — no scroll-offset math.
   func restore(_ location: JumpLocation) {
     guard let pdfView, let document = pdfView.document,
       let page = document.page(at: location.pageIndex)
     else { return }
-    pdfView.autoScales = false
-    pdfView.scaleFactor = min(
+
+    restoreWorkItem?.cancel()
+
+    let scale = min(
       pdfView.maxScaleFactor,
       max(pdfView.minScaleFactor, CGFloat(location.scaleFactor))
     )
+    pdfView.autoScales = false
+    pdfView.scaleFactor = scale
+
     let box = page.bounds(for: .cropBox)
-    let point = CGPoint(
-      x: box.minX + box.width * location.viewportCenter.x,
-      y: box.minY + box.height * location.viewportCenter.y
-    )
-    pdfView.go(to: PDFDestination(page: page, at: point))
+    guard let pageRect = location.pageSpaceRect(in: box), !pageRect.isNull, !pageRect.isEmpty
+    else { return }
+
+    // One layout-settled apply only (avoids the old Destination + centerVisible double walk).
+    let work = DispatchWorkItem { [weak pdfView] in
+      guard let pdfView else { return }
+      pdfView.autoScales = false
+      pdfView.scaleFactor = scale
+      pdfView.layoutIfNeeded()
+      pdfView.go(to: pageRect, on: page)
+    }
+    restoreWorkItem = work
+    DispatchQueue.main.async(execute: work)
   }
 
   func goToPage(index: Int) {
@@ -62,9 +86,17 @@ final class PDFController {
         pdfView.maxScaleFactor, max(pdfView.minScaleFactor, scale))
     }
     let box = page.bounds(for: .cropBox)
-    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return }
-    pdfView.go(
-      to: PDFDestination(page: page, at: CGPoint(x: target.midX, y: target.midY)))
+    guard let pageRect = PortalGeometry.pageRect(for: anchor.bounds, in: box),
+      !pageRect.isNull, !pageRect.isEmpty
+    else { return }
+    pdfView.go(to: pageRect, on: page)
+    DispatchQueue.main.async { [weak pdfView] in
+      pdfView?.go(to: pageRect, on: page)
+    }
+  }
+
+  func setScrollingEnabled(_ enabled: Bool) {
+    pdfView?.lattice_scrollView?.isScrollEnabled = enabled
   }
 
   func searchOriginSelection(backward: Bool) -> PDFSelection? {
@@ -137,5 +169,19 @@ final class PDFController {
   func clearSelection() {
     pdfView?.setCurrentSelection(nil, animate: false)
     pdfView?.highlightedSelections = nil
+  }
+}
+
+extension PDFView {
+  var lattice_scrollView: UIScrollView? {
+    if let scroll = subviews.compactMap({ $0 as? UIScrollView }).first {
+      return scroll
+    }
+    var stack = subviews
+    while let view = stack.popLast() {
+      if let scroll = view as? UIScrollView { return scroll }
+      stack.append(contentsOf: view.subviews)
+    }
+    return nil
   }
 }

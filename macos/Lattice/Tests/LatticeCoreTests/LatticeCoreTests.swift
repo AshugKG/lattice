@@ -298,6 +298,30 @@ private func location(
   #expect(invalid.scaleFactor == 4)
 }
 
+@Test func jumpLocationVisibleRectRoundTripsAndLegacyDecodes() throws {
+  let rect = NormalizedRect(x: 0.1, y: 0.2, width: 0.8, height: 0.5)
+  let location = JumpLocation(
+    documentFingerprint: "document",
+    documentPath: "/tmp/document.pdf",
+    pageIndex: 3,
+    viewportCenter: NormalizedPoint(x: 0.5, y: 0.45),
+    scaleFactor: 1.5,
+    visibleRect: rect
+  )
+  let data = try JSONEncoder().encode(location)
+  let decoded = try JSONDecoder().decode(JumpLocation.self, from: data)
+  #expect(decoded.visibleRect == rect)
+
+  let legacy = """
+    {"documentFingerprint":"document","documentPath":"/tmp/document.pdf","pageIndex":1,"viewportCenter":{"x":0.5,"y":0.5},"scaleFactor":1}
+    """.data(using: .utf8)!
+  let legacyDecoded = try JSONDecoder().decode(JumpLocation.self, from: legacy)
+  #expect(legacyDecoded.visibleRect == nil)
+  let pageRect = legacyDecoded.pageSpaceRect(in: CGRect(x: 0, y: 0, width: 100, height: 200))
+  #expect(pageRect != nil)
+  #expect(pageRect!.width > 0 && pageRect!.height > 0)
+}
+
 @Test @MainActor func readingStateRepositoryRoundTripsAndReplacesLatestPosition() throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: directory) }

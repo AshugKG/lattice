@@ -209,6 +209,8 @@ public final class LatticePDFView: PDFView {
     let pagePoint = convert(viewCenter, to: centerPage)
     let box = centerPage.bounds(for: .cropBox)
     guard box.width > 0, box.height > 0 else { return nil }
+    let visibleInPage = convert(bounds, to: centerPage)
+    let visibleRect = PortalGeometry.normalized(rect: visibleInPage, in: box)
     return JumpLocation(
       documentFingerprint: fingerprint,
       documentPath: path,
@@ -217,7 +219,8 @@ public final class LatticePDFView: PDFView {
         x: min(1, max(0, (pagePoint.x - box.minX) / box.width)),
         y: min(1, max(0, (pagePoint.y - box.minY) / box.height))
       ),
-      scaleFactor: scaleFactor
+      scaleFactor: scaleFactor,
+      visibleRect: visibleRect
     )
   }
 
@@ -228,8 +231,14 @@ public final class LatticePDFView: PDFView {
       scaleFactor = min(maxScaleFactor, max(minScaleFactor, scale))
     }
     let box = page.bounds(for: .cropBox)
-    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return }
-    center(pagePoint: NSPoint(x: target.midX, y: target.midY), on: page)
+    guard let target = PortalGeometry.pageRect(for: anchor.bounds, in: box),
+      !target.isNull, !target.isEmpty
+    else { return }
+    go(to: target, on: page)
+    DispatchQueue.main.async { [weak self] in
+      self?.go(to: target, on: page)
+      self?.onViewportChanged?()
+    }
     onViewportChanged?()
   }
 
@@ -238,12 +247,17 @@ public final class LatticePDFView: PDFView {
     autoScales = false
     scaleFactor = min(maxScaleFactor, max(minScaleFactor, location.scaleFactor))
     let box = page.bounds(for: .cropBox)
-    let point = NSPoint(
-      x: box.minX + box.width * location.viewportCenter.x,
-      y: box.minY + box.height * location.viewportCenter.y
-    )
-    center(pagePoint: point, on: page)
-    onViewportChanged?()
+    guard let pageRect = location.pageSpaceRect(in: box), !pageRect.isNull, !pageRect.isEmpty
+    else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.autoScales = false
+      self.scaleFactor = min(
+        self.maxScaleFactor, max(self.minScaleFactor, location.scaleFactor))
+      self.layoutSubtreeIfNeeded()
+      self.go(to: pageRect, on: page)
+      self.onViewportChanged?()
+    }
   }
 
   /// Scroll so a normalized top-of-page Y (0 = top, 1 = bottom) sits near the viewport top.
@@ -306,31 +320,6 @@ public final class LatticePDFView: PDFView {
     clip.scroll(to: point)
     scrollView.reflectScrolledClipView(clip)
     onViewportChanged?()
-  }
-
-  private func center(pagePoint: NSPoint, on page: PDFPage) {
-    go(to: PDFDestination(page: page, at: pagePoint))
-    DispatchQueue.main.async { [weak self, weak page] in
-      guard let self, let page else { return }
-      self.centerVisible(pagePoint: pagePoint, on: page)
-    }
-  }
-
-  private func centerVisible(pagePoint: NSPoint, on page: PDFPage) {
-    guard let scrollView, let documentView = scrollView.documentView else { return }
-    layoutSubtreeIfNeeded()
-    documentView.layoutSubtreeIfNeeded()
-    let pointInPDFView = convert(pagePoint, from: page)
-    let pointInDocument = documentView.convert(pointInPDFView, from: self)
-    let clip = scrollView.contentView
-    let proposed = NSRect(
-      x: pointInDocument.x - clip.bounds.width / 2,
-      y: pointInDocument.y - clip.bounds.height / 2,
-      width: clip.bounds.width,
-      height: clip.bounds.height
-    )
-    clip.scroll(to: clip.constrainBoundsRect(proposed).origin)
-    scrollView.reflectScrolledClipView(clip)
   }
 
   private func scrollToDocumentEdge(end: Bool) {

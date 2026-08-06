@@ -18,7 +18,7 @@ final class ReaderModel {
   var errorMessage: String?
 
   let pdfController = PDFController()
-  let portalOverlay = PortalOverlayView()
+  let portalOverlay = PortalOverlayController()
 
   private let recentsRepo = RecentsRepository()
   private let readingRepo = ReadingStateRepository()
@@ -31,6 +31,12 @@ final class ReaderModel {
   private var searchOriginRecorded = false
   private var persistTask: Task<Void, Never>?
   private var arrivalClearTask: Task<Void, Never>?
+  private var suppressPersistUntil: Date?
+  /// While true, ignore viewport callbacks so a transient page-1 layout can't clobber resume.
+  private var isRestoringViewport = false
+  /// Prevents makeUIView + updateUIView from applying resume twice for the same open.
+  private var resumeAppliedForOpenID: UUID?
+  private var currentOpenID: UUID?
 
   init() {
     portalOverlay.onBoxCaptured = { [weak self] box in
@@ -85,6 +91,8 @@ final class ReaderModel {
     cancelPortalCapture()
     openDocumentURL = nil
     descriptor = nil
+    currentOpenID = nil
+    resumeAppliedForOpenID = nil
     portalOverlay.documentFingerprint = nil
     portalOverlay.portals = []
     pdfController.pdfView?.document = nil
@@ -110,6 +118,7 @@ final class ReaderModel {
       pageCount: document.pageCount
     )
     descriptor = desc
+    portalOverlay.resetPages()
     portalOverlay.documentFingerprint = fingerprint
     portalOverlay.portals = portals
     syncPortalOverlayCapture()
@@ -122,24 +131,39 @@ final class ReaderModel {
     )
     try? recentsRepo.record(recent, into: &recents)
 
-    if pendingJumpRestore == nil, pendingArrival == nil {
+    // Avoid overwriting the saved position with a transient page-1 reading while restore settles.
+    suppressPersistUntil = Date().addingTimeInterval(1.0)
+
+    let openID = currentOpenID
+    let alreadyResumed = openID != nil && resumeAppliedForOpenID == openID
+
+    if pendingJumpRestore == nil, pendingArrival == nil, !alreadyResumed {
+      if let openID { resumeAppliedForOpenID = openID }
       if let saved = readingPositions[fingerprint]?.location {
-        pdfController.restore(saved.clamped(pageCount: document.pageCount))
+        beginViewportRestore(saved.clamped(pageCount: document.pageCount))
       } else if let byPath = readingPositions.first(where: {
         $0.value.location.documentPath == url.path
       })?.value.location {
-        pdfController.restore(byPath.clamped(pageCount: document.pageCount))
+        beginViewportRestore(byPath.clamped(pageCount: document.pageCount))
+      } else {
+        updatePageLabel()
       }
+    } else {
+      updatePageLabel()
     }
 
-    updatePageLabel()
     updateJumpButtons()
     statusMessage = desc.name
+    portalOverlay.refreshAll()
   }
 
   func viewportChanged() {
+    if isRestoringViewport { return }
     portalOverlay.viewportDidChange()
     updatePageLabel()
+    if let suppressPersistUntil, Date() < suppressPersistUntil {
+      return
+    }
     schedulePersistReadingPosition()
   }
 
@@ -282,6 +306,8 @@ final class ReaderModel {
       jumpList.recordBeforeJump(location)
     }
     cancelPortalCapture()
+    currentOpenID = UUID()
+    resumeAppliedForOpenID = nil
     openDocumentURL = url
     // Resume handled in documentDidLoad via readingPositions; `resume` reserved for future skip.
     _ = resume
@@ -313,6 +339,7 @@ final class ReaderModel {
       captureMode = .inactive
       syncPortalOverlayCapture()
       portalOverlay.portals = portals
+      portalOverlay.refreshAll()
       try? portalsRepo.save(portals)
       statusMessage = "Portal created · \(portals.count) total"
     case .inactive, .sourcePlaced:
@@ -332,6 +359,7 @@ final class ReaderModel {
     } else {
       pdfController.go(to: destination)
       flashArrival(destination.id)
+      portalOverlay.refreshAll()
       viewportChanged()
     }
   }
@@ -343,28 +371,35 @@ final class ReaderModel {
     pendingArrival = nil
     pdfController.go(to: pending)
     flashArrival(pending.id)
+    portalOverlay.refreshAll()
     viewportChanged()
   }
 
   private func deletePortal(_ id: UUID) {
     portals.removeAll { $0.id == id }
     portalOverlay.portals = portals
+    portalOverlay.refreshAll()
     try? portalsRepo.save(portals)
     statusMessage = "Portal deleted"
   }
 
   private func flashArrival(_ id: UUID) {
     portalOverlay.arrivalAnchorID = id
+    portalOverlay.refreshAll()
     arrivalClearTask?.cancel()
     arrivalClearTask = Task {
       try? await Task.sleep(for: .seconds(1.2))
       guard !Task.isCancelled else { return }
       portalOverlay.arrivalAnchorID = nil
+      portalOverlay.refreshAll()
     }
   }
 
   private func syncPortalOverlayCapture() {
     portalOverlay.captureMode = captureMode
+    portalOverlay.refreshAll()
+    // Capture uses a full-bleed layer; freeze PDF scrolling so drags draw portals.
+    pdfController.setScrollingEnabled(!captureMode.allowsDrawing)
   }
 
   private func currentLocation() -> JumpLocation? {
@@ -402,14 +437,15 @@ final class ReaderModel {
     if descriptor?.fingerprint == target.documentFingerprint
       || openDocumentURL?.path == target.documentPath
     {
-      pdfController.restore(target)
-      viewportChanged()
+      beginViewportRestore(target)
       updateJumpButtons()
       completion(true)
       return
     }
 
     pendingJumpRestore = target
+    currentOpenID = UUID()
+    resumeAppliedForOpenID = nil
     openDocumentURL = url
     updateJumpButtons()
     completion(true)
@@ -423,10 +459,24 @@ final class ReaderModel {
       return
     }
     pendingJumpRestore = nil
-    pdfController.restore(pending)
-    viewportChanged()
+    beginViewportRestore(pending)
     updateJumpButtons()
     applyPendingArrivalIfNeeded()
+  }
+
+  private func beginViewportRestore(_ location: JumpLocation) {
+    isRestoringViewport = true
+    suppressPersistUntil = Date().addingTimeInterval(1.0)
+    let pageCount = descriptor?.pageCount ?? 0
+    pageLabel = pageCount > 0 ? "\(location.pageIndex + 1) / \(pageCount)" : ""
+    pdfController.restore(location)
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: .milliseconds(250))
+      guard let self else { return }
+      self.isRestoringViewport = false
+      self.updatePageLabel()
+      self.portalOverlay.refreshAll()
+    }
   }
 
   private func schedulePersistReadingPosition() {
@@ -452,7 +502,7 @@ final class ReaderModel {
   private func updatePageLabel() {
     guard let pdfView = pdfController.pdfView,
       let document = pdfView.document,
-      let page = pdfView.currentPage
+      let page = pdfController.visiblePage(in: pdfView)
     else {
       pageLabel = ""
       return

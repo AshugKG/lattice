@@ -17,6 +17,7 @@ struct ReaderScreen: View {
           documentURL: model.openDocumentURL,
           controller: model.pdfController,
           portalOverlay: model.portalOverlay,
+          captureMode: model.captureMode,
           onViewportChanged: { model.viewportChanged() },
           onDocumentReady: { document in
             model.documentDidLoad(document)

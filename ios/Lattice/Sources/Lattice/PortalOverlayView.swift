@@ -4,11 +4,8 @@ import UIKit
 
 enum PortalCaptureMode: Equatable {
   case inactive
-  /// Drag to place the source box.
   case source
-  /// Source placed; waiting for a second Portal button press.
   case sourcePlaced
-  /// Drag to place the destination box.
   case destination
 
   var allowsDrawing: Bool {
@@ -29,29 +26,81 @@ struct PortalInteractionTarget {
   let endpoint: PortalEndpoint
 }
 
-@MainActor
-final class PortalOverlayView: UIView {
-  weak var pdfView: PDFView?
-  var portals: [Portal] = [] { didSet { setNeedsDisplay() } }
-  var documentFingerprint: String? { didSet { setNeedsDisplay() } }
-  var captureMode: PortalCaptureMode = .inactive {
-    didSet {
-      dragStart = nil
-      dragCurrent = nil
-      dragPage = nil
-      isUserInteractionEnabled = true
-      setNeedsDisplay()
-    }
-  }
-  var arrivalAnchorID: UUID? { didSet { setNeedsDisplay() } }
+/// Owns per-page overlay views so portal rects are transformed by PDFKit with each page.
+/// Drawing new portals happens on `PortalCaptureView` (full-bleed); these views only paint/hit-test.
+final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unchecked Sendable {
+  var portals: [Portal] = []
+  var documentFingerprint: String?
+  var captureMode: PortalCaptureMode = .inactive
+  var arrivalAnchorID: UUID?
 
   var onBoxCaptured: ((CapturedPortalBox) -> Void)?
   var onActivatePortal: ((PortalInteractionTarget) -> Void)?
   var onDeletePortal: ((UUID) -> Void)?
 
-  private var dragStart: CGPoint?
-  private var dragCurrent: CGPoint?
-  private var dragPage: PDFPage?
+  weak var pdfView: PDFView?
+  private var pageViews: [Int: PortalPageOverlayView] = [:]
+  private let lock = NSLock()
+
+  func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> UIView? {
+    let pageIndex = view.document?.index(for: page) ?? -1
+    lock.lock()
+    defer { lock.unlock() }
+
+    if pageIndex >= 0, let existing = pageViews[pageIndex] {
+      existing.page = page
+      existing.pageIndex = pageIndex
+      existing.sync(from: self)
+      return existing
+    }
+
+    let overlay = PortalPageOverlayView()
+    overlay.page = page
+    overlay.pageIndex = pageIndex
+    overlay.controller = self
+    overlay.sync(from: self)
+    if pageIndex >= 0 {
+      pageViews[pageIndex] = overlay
+    }
+    return overlay
+  }
+
+  func pdfView(
+    _ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage
+  ) {
+    _ = overlayView
+    _ = page
+  }
+
+  func refreshAll() {
+    lock.lock()
+    let views = Array(pageViews.values)
+    lock.unlock()
+    for view in views {
+      view.sync(from: self)
+      view.setNeedsDisplay()
+    }
+  }
+
+  func resetPages() {
+    lock.lock()
+    pageViews.removeAll()
+    lock.unlock()
+  }
+
+  func viewportDidChange() {}
+}
+
+/// Drawn on a PDFKit page overlay — scrolls and zooms with the page like ink on the PDF.
+final class PortalPageOverlayView: UIView {
+  weak var page: PDFPage?
+  weak var controller: PortalOverlayController?
+  var pageIndex: Int = -1
+
+  private var portals: [Portal] = []
+  private var documentFingerprint: String?
+  private var captureMode: PortalCaptureMode = .inactive
+  private var arrivalAnchorID: UUID?
   private let deleteBadgeSize: CGFloat = 22
 
   override init(frame: CGRect) {
@@ -59,132 +108,56 @@ final class PortalOverlayView: UIView {
     backgroundColor = .clear
     isOpaque = false
     contentMode = .redraw
-
-    let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-    pan.maximumNumberOfTouches = 1
-    addGestureRecognizer(pan)
-
-    let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-    addGestureRecognizer(tap)
+    isMultipleTouchEnabled = false
+    // Taps/drags go through PortalChromeView; this layer only paints with the page.
+    isUserInteractionEnabled = false
   }
 
   required init?(coder: NSCoder) { nil }
 
-  func viewportDidChange() {
+  func sync(from controller: PortalOverlayController) {
+    portals = controller.portals
+    documentFingerprint = controller.documentFingerprint
+    captureMode = controller.captureMode
+    arrivalAnchorID = controller.arrivalAnchorID
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
     setNeedsDisplay()
   }
 
-  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return nil }
-    if captureMode.allowsDrawing { return self }
-    if deleteTarget(at: point) != nil { return self }
-    if interactionTarget(at: point) != nil { return self }
-    return nil
-  }
-
   override func draw(_ rect: CGRect) {
-    guard let context = UIGraphicsGetCurrentContext(), documentFingerprint != nil else { return }
+    guard let context = UIGraphicsGetCurrentContext(),
+      let documentFingerprint
+    else { return }
+
+    let pageIndex = resolvedPageIndex()
+    guard pageIndex >= 0 else { return }
 
     for portal in portals {
-      if portal.destination.documentFingerprint == documentFingerprint {
+      if portal.destination.documentFingerprint == documentFingerprint,
+        portal.destination.pageIndex == pageIndex
+      {
         drawDestination(portal.destination, in: context)
       }
-      if portal.source.documentFingerprint == documentFingerprint {
+      if portal.source.documentFingerprint == documentFingerprint,
+        portal.source.pageIndex == pageIndex
+      {
         drawSource(portal.source, in: context)
         drawDeleteBadge(for: portal.source, in: context)
       }
     }
-
-    if let start = dragStart, let current = dragCurrent {
-      let dragRect = standardizedRect(from: start, to: current)
-      let color = UIColor.tintColor
-      context.setFillColor(color.withAlphaComponent(0.14).cgColor)
-      context.setStrokeColor(color.cgColor)
-      context.setLineWidth(2)
-      context.fill(dragRect)
-      context.stroke(dragRect)
-    }
   }
 
-  @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-    guard captureMode.allowsDrawing, let pdfView else { return }
-    let point = gesture.location(in: self)
-
-    switch gesture.state {
-    case .began:
-      let pdfPoint = pdfView.convert(point, from: self)
-      guard let page = pdfView.page(for: pdfPoint, nearest: false) else { return }
-      dragPage = page
-      dragStart = point
-      dragCurrent = point
-      setNeedsDisplay()
-    case .changed:
-      guard let dragPage else { return }
-      dragCurrent = clamp(point, to: overlayRect(for: dragPage))
-      setNeedsDisplay()
-    case .ended, .cancelled:
-      defer {
-        dragStart = nil
-        dragCurrent = nil
-        dragPage = nil
-        setNeedsDisplay()
-      }
-      guard let start = dragStart, let current = dragCurrent, let page = dragPage else { return }
-      let boxRect = standardizedRect(from: start, to: current).intersection(overlayRect(for: page))
-      guard boxRect.width >= 8, boxRect.height >= 8,
-        let captured = capturedBox(from: boxRect, page: page)
-      else { return }
-      onBoxCaptured?(captured)
-    default:
-      break
-    }
-  }
-
-  @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-    guard captureMode == .inactive, gesture.state == .ended else { return }
-    let point = gesture.location(in: self)
-    if let portalID = deleteTarget(at: point) {
-      onDeletePortal?(portalID)
-      return
-    }
-    guard let target = interactionTarget(at: point) else { return }
-    onActivatePortal?(target)
-  }
-
-  private func deleteTarget(at point: CGPoint) -> UUID? {
-    guard let documentFingerprint else { return nil }
-    for portal in portals.reversed() {
-      guard portal.source.documentFingerprint == documentFingerprint,
-        let badge = deleteBadgeRect(for: portal.source),
-        badge.insetBy(dx: -4, dy: -4).contains(point)
-      else { continue }
-      return portal.id
-    }
-    return nil
-  }
-
-  private func interactionTarget(at point: CGPoint) -> PortalInteractionTarget? {
-    guard let documentFingerprint else { return nil }
-    let padding: CGFloat = 10
-    for portal in portals.reversed() {
-      if portal.source.documentFingerprint == documentFingerprint,
-        let rect = overlayRect(for: portal.source)?.insetBy(dx: -padding, dy: -padding),
-        rect.contains(point)
-      {
-        return PortalInteractionTarget(portal: portal, endpoint: .source)
-      }
-      if portal.destination.documentFingerprint == documentFingerprint,
-        let rect = overlayRect(for: portal.destination)?.insetBy(dx: -padding, dy: -padding),
-        rect.contains(point)
-      {
-        return PortalInteractionTarget(portal: portal, endpoint: .destination)
-      }
-    }
-    return nil
+  private func resolvedPageIndex() -> Int {
+    if pageIndex >= 0 { return pageIndex }
+    guard let page, let document = controller?.pdfView?.document else { return -1 }
+    return document.index(for: page)
   }
 
   private func drawSource(_ anchor: PortalAnchor, in context: CGContext) {
-    guard let rect = overlayRect(for: anchor) else { return }
+    guard let rect = viewRect(for: anchor) else { return }
     let isArrival = anchor.id == arrivalAnchorID
     let color = UIColor.tintColor
     context.setFillColor(color.withAlphaComponent(isArrival ? 0.28 : 0.08).cgColor)
@@ -196,7 +169,7 @@ final class PortalOverlayView: UIView {
   }
 
   private func drawDestination(_ anchor: PortalAnchor, in context: CGContext) {
-    guard let rect = overlayRect(for: anchor) else { return }
+    guard let rect = viewRect(for: anchor) else { return }
     let isArrival = anchor.id == arrivalAnchorID
     let color = UIColor.tintColor
     context.setFillColor(color.withAlphaComponent(isArrival ? 0.16 : 0.04).cgColor)
@@ -224,7 +197,7 @@ final class PortalOverlayView: UIView {
   }
 
   private func deleteBadgeRect(for anchor: PortalAnchor) -> CGRect? {
-    guard let rect = overlayRect(for: anchor) else { return nil }
+    guard let rect = viewRect(for: anchor) else { return nil }
     let size = deleteBadgeSize
     return CGRect(
       x: rect.maxX - size * 0.45,
@@ -234,44 +207,17 @@ final class PortalOverlayView: UIView {
     )
   }
 
-  private func overlayRect(for anchor: PortalAnchor) -> CGRect? {
-    guard let pdfView, let document = pdfView.document,
-      let page = document.page(at: anchor.pageIndex)
+  private func viewRect(for anchor: PortalAnchor) -> CGRect? {
+    guard let page else { return nil }
+    let box = page.bounds(for: .cropBox)
+    guard box.width > 0, box.height > 0, bounds.width > 0, bounds.height > 0,
+      let pageRect = PortalGeometry.pageRect(for: anchor.bounds, in: box)
     else { return nil }
-    let box = page.bounds(for: .cropBox)
-    guard let pageRect = PortalGeometry.pageRect(for: anchor.bounds, in: box) else { return nil }
-    return convert(pdfView.convert(pageRect, from: page), from: pdfView)
-  }
 
-  private func overlayRect(for page: PDFPage) -> CGRect {
-    guard let pdfView else { return .zero }
-    return convert(pdfView.convert(page.bounds(for: .cropBox), from: page), from: pdfView)
-  }
-
-  private func capturedBox(from overlayRect: CGRect, page: PDFPage) -> CapturedPortalBox? {
-    guard let pdfView, let document = pdfView.document else { return nil }
-    let viewRect = pdfView.convert(overlayRect, from: self)
-    let pageRect = pdfView.convert(viewRect, to: page).intersection(page.bounds(for: .cropBox))
-    let box = page.bounds(for: .cropBox)
-    guard let normalized = PortalGeometry.normalized(rect: pageRect, in: box) else { return nil }
-    let quote = page.selection(for: pageRect)?.string?.trimmingCharacters(
-      in: .whitespacesAndNewlines)
-    return CapturedPortalBox(
-      pageIndex: document.index(for: page),
-      bounds: normalized,
-      quotedText: quote?.isEmpty == true ? nil : quote
-    )
-  }
-
-  private func clamp(_ point: CGPoint, to rect: CGRect) -> CGPoint {
-    CGPoint(
-      x: min(max(point.x, rect.minX), rect.maxX),
-      y: min(max(point.y, rect.minY), rect.maxY)
-    )
-  }
-
-  private func standardizedRect(from a: CGPoint, to b: CGPoint) -> CGRect {
-    CGRect(
-      x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+    let x = (pageRect.minX - box.minX) / box.width * bounds.width
+    let width = pageRect.width / box.width * bounds.width
+    let yFromTop = (box.maxY - pageRect.maxY) / box.height * bounds.height
+    let height = pageRect.height / box.height * bounds.height
+    return CGRect(x: x, y: yFromTop, width: width, height: height)
   }
 }

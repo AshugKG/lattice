@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public struct JumpLocation: Codable, Equatable, Sendable {
@@ -8,19 +9,24 @@ public struct JumpLocation: Codable, Equatable, Sendable {
   public let pageIndex: Int
   public let viewportCenter: NormalizedPoint
   public let scaleFactor: Double
+  /// Normalized crop-box rect of the visible viewport on `pageIndex` (PDFKit `go(to:on:)`).
+  /// Absent in legacy reading-state / jump-list entries.
+  public let visibleRect: NormalizedRect?
 
   public init(
     documentFingerprint: String,
     documentPath: String,
     pageIndex: Int,
     viewportCenter: NormalizedPoint,
-    scaleFactor: Double
+    scaleFactor: Double,
+    visibleRect: NormalizedRect? = nil
   ) {
     self.documentFingerprint = documentFingerprint
     self.documentPath = documentPath
     self.pageIndex = pageIndex
     self.viewportCenter = viewportCenter
     self.scaleFactor = scaleFactor
+    self.visibleRect = visibleRect
   }
 
   /// Session-only sentinel for the recents home screen in the Vim jump list.
@@ -30,7 +36,8 @@ public struct JumpLocation: Codable, Equatable, Sendable {
       documentPath: "",
       pageIndex: 0,
       viewportCenter: NormalizedPoint(x: 0.5, y: 0.5),
-      scaleFactor: 1
+      scaleFactor: 1,
+      visibleRect: nil
     )
   }
 
@@ -38,10 +45,21 @@ public struct JumpLocation: Codable, Equatable, Sendable {
 
   public func isEquivalent(to other: JumpLocation) -> Bool {
     if isHome || other.isHome { return isHome && other.isHome }
-    return documentFingerprint == other.documentFingerprint && pageIndex == other.pageIndex
+    let centersMatch =
+      documentFingerprint == other.documentFingerprint && pageIndex == other.pageIndex
       && abs(viewportCenter.x - other.viewportCenter.x) < 0.002
       && abs(viewportCenter.y - other.viewportCenter.y) < 0.002
       && abs(scaleFactor - other.scaleFactor) < 0.01
+    guard centersMatch else { return false }
+    switch (visibleRect, other.visibleRect) {
+    case (nil, nil):
+      return true
+    case (let a?, let b?):
+      return abs(a.x - b.x) < 0.002 && abs(a.y - b.y) < 0.002
+        && abs(a.width - b.width) < 0.002 && abs(a.height - b.height) < 0.002
+    default:
+      return true
+    }
   }
 
   public func clamped(pageCount: Int, minimumScale: Double = 0.25, maximumScale: Double = 4)
@@ -56,8 +74,29 @@ public struct JumpLocation: Codable, Equatable, Sendable {
         y: viewportCenter.y.isFinite ? min(1, max(0, viewportCenter.y)) : 0.5
       ),
       scaleFactor: scaleFactor.isFinite
-        ? min(maximumScale, max(minimumScale, scaleFactor)) : 1
+        ? min(maximumScale, max(minimumScale, scaleFactor)) : 1,
+      visibleRect: visibleRect.flatMap { rect in
+        guard rect.isValid else { return nil }
+        return NormalizedRect(
+          x: min(1, max(0, rect.x)),
+          y: min(1, max(0, rect.y)),
+          width: min(1 - min(1, max(0, rect.x)), max(0.000_001, rect.width)),
+          height: min(1 - min(1, max(0, rect.y)), max(0.000_001, rect.height))
+        )
+      }
     )
+  }
+
+  /// Page-space rect for PDFKit `go(to:on:)`, preferring saved visible rect.
+  public func pageSpaceRect(in pageBounds: CGRect) -> CGRect? {
+    if let visibleRect, let rect = PortalGeometry.pageRect(for: visibleRect, in: pageBounds) {
+      return rect
+    }
+    let cx = pageBounds.minX + pageBounds.width * viewportCenter.x
+    let cy = pageBounds.minY + pageBounds.height * viewportCenter.y
+    let size = min(pageBounds.width, pageBounds.height) * 0.02
+    return CGRect(x: cx - size / 2, y: cy - size / 2, width: size, height: size)
+      .intersection(pageBounds.standardized)
   }
 }
 
@@ -136,7 +175,8 @@ public struct JumpList: Sendable {
       documentPath: path,
       pageIndex: location.pageIndex,
       viewportCenter: location.viewportCenter,
-      scaleFactor: location.scaleFactor
+      scaleFactor: location.scaleFactor,
+      visibleRect: location.visibleRect
     )
   }
 
