@@ -366,3 +366,33 @@ private func location(
   #expect(seeded[0].fingerprint == "fp")
   #expect(seeded[0].name == "seed.pdf")
 }
+
+@Test func launchArgumentsParseGotoFlags() {
+  let parsed = LaunchArguments.parse([
+    "Lattice",
+    "/tmp/rising_sea.pdf",
+    "--page-index",
+    "14",
+    "--rect",
+    "0.12,0.40,0.76,0.18",
+    "--label",
+    "3.1.3",
+  ])
+  #expect(parsed.pdfURL?.path == "/tmp/rising_sea.pdf")
+  #expect(parsed.goto?.pageIndex == 14)
+  #expect(parsed.goto?.bounds == NormalizedRect(x: 0.12, y: 0.40, width: 0.76, height: 0.18))
+  #expect(parsed.goto?.label == "3.1.3")
+}
+
+@Test func launchArgumentsRejectInvalidRect() {
+  let parsed = LaunchArguments.parse([
+    "Lattice",
+    "/tmp/book.pdf",
+    "--page-index",
+    "1",
+    "--rect",
+    "bad",
+  ])
+  #expect(parsed.pdfURL?.path == "/tmp/book.pdf")
+  #expect(parsed.goto == nil)
+}

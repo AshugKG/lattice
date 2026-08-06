@@ -90,6 +90,8 @@ final class MarkOverlayView: NSView {
     }
   }
   var arrivalAnchorID: UUID? { didSet { needsDisplay = true } }
+  /// External focus rect (LeetMath / CLI); drawn until cleared or replaced.
+  var focusHighlight: MarkAnchor? { didSet { needsDisplay = true } }
   var onBoxCaptured: ((CapturedMarkBox) -> Void)?
   var onActivateMark: ((MarkInteractionTarget) -> Void)?
   var onDeleteMark: ((UUID) -> Void)?
@@ -228,6 +230,10 @@ final class MarkOverlayView: NSView {
       }
     }
 
+    if let focus = focusHighlight {
+      drawFocusHighlight(focus)
+    }
+
     if let start = dragStart, let current = dragCurrent {
       let rect = standardizedRect(from: start, to: current)
       NSColor.controlAccentColor.withAlphaComponent(0.14).setFill()
@@ -237,6 +243,17 @@ final class MarkOverlayView: NSView {
       path.fill()
       path.stroke()
     }
+  }
+
+  private func drawFocusHighlight(_ anchor: MarkAnchor) {
+    guard let rect = overlayRect(for: anchor) else { return }
+    let color = NSColor.systemOrange
+    color.withAlphaComponent(0.22).setFill()
+    color.setStroke()
+    let path = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+    path.lineWidth = 3
+    path.fill()
+    path.stroke()
   }
 
   private func drawSource(_ anchor: MarkAnchor, hovered: Bool) {

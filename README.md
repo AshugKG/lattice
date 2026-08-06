@@ -36,6 +36,18 @@ bun install
 bun run native -- /absolute/path/to/document.pdf
 ```
 
+Open at a page with a highlight rectangle (used by LeetMath):
+
+```sh
+bun run open -- /absolute/path/to/document.pdf \
+  --page-index 25 \
+  --rect 0.08,0.40,0.84,0.18 \
+  --label 1.2.A
+```
+
+`--page-index` is 0-based. `--rect` is normalized crop-box `x,y,width,height` in `[0,1]`.
+Helper: [`scripts/lattice-open.sh`](scripts/lattice-open.sh).
+
 You can also click Open or drop a PDF into the reader.
 
 ### Build an app bundle

@@ -1,9 +1,11 @@
 import AppKit
+import LatticeCore
 
 @MainActor
 final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
   private var windowController: LatticeWindowController?
   private var pendingDocumentURLs: [URL] = []
+  private var pendingGoto: LaunchGoto?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     installMainMenu()
@@ -12,12 +14,12 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
     controller.showWindow(nil)
     NSApp.activate(ignoringOtherApps: true)
 
-    let commandLineURL = CommandLine.arguments.dropFirst().first(where: {
-      $0.lowercased().hasSuffix(".pdf")
-    }).map { URL(fileURLWithPath: $0) }
-    if let url = pendingDocumentURLs.last ?? commandLineURL {
+    let launch = LaunchArguments.parse(CommandLine.arguments)
+    pendingGoto = launch.goto
+    if let url = pendingDocumentURLs.last ?? launch.pdfURL {
       pendingDocumentURLs.removeAll()
-      openDocument(at: url)
+      openDocument(at: url, goto: pendingGoto)
+      pendingGoto = nil
     }
   }
 
@@ -41,7 +43,7 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
     if windowController == nil {
       pendingDocumentURLs.append(contentsOf: urls)
     } else if let url = urls.last {
-      openDocument(at: url)
+      openDocument(at: url, goto: nil)
     }
     sender.reply(toOpenOrPrint: .success)
   }
@@ -57,15 +59,20 @@ final class LatticeAppDelegate: NSObject, NSApplicationDelegate {
     windowController?.presentOpenPanel()
   }
 
-  private func openDocument(at url: URL) {
+  private func openDocument(at url: URL, goto: LaunchGoto?) {
     guard let windowController else {
       pendingDocumentURLs.append(url)
+      pendingGoto = goto
       return
     }
     windowController.showWindow(nil)
     windowController.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    windowController.openDocument(at: url)
+    if let goto {
+      windowController.openDocument(at: url, goto: goto)
+    } else {
+      windowController.openDocument(at: url)
+    }
   }
 
   private func installMainMenu() {

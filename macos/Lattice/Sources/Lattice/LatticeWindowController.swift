@@ -87,6 +87,40 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     }
   }
 
+  /// Open a PDF and jump to a normalized rect with a persistent orange highlight.
+  func openDocument(at url: URL, goto: LaunchGoto) {
+    openDocument(at: url, recordJump: true, resumeReadingPosition: false) { [weak self] descriptor in
+      guard let self else { return }
+      let pageIndex = min(max(0, goto.pageIndex), max(0, descriptor.pageCount - 1))
+      let anchor = MarkAnchor(
+        documentFingerprint: descriptor.fingerprint,
+        documentPath: descriptor.url.path,
+        pageIndex: pageIndex,
+        bounds: goto.bounds,
+        quotedText: goto.label
+      )
+      self.applyFocusHighlight(anchor)
+    }
+  }
+
+  func applyFocusHighlight(_ anchor: MarkAnchor) {
+    for pane in panes {
+      pane.markOverlay.focusHighlight = nil
+    }
+    pdfView.go(to: anchor)
+    markOverlay.focusHighlight = anchor
+    markOverlay.arrivalAnchorID = anchor.id
+    // Keep highlight until the next focus jump; soft-pulse arrival for ~4s.
+    let overlay = markOverlay
+    let id = anchor.id
+    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak overlay] in
+      if overlay?.arrivalAnchorID == id {
+        overlay?.arrivalAnchorID = nil
+      }
+    }
+    updatePageAndScale()
+  }
+
   func openDocument(
     at url: URL,
     recordJump: Bool = true,

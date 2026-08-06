@@ -9,6 +9,7 @@
   },
   "scripts": {
     "native": "swift run --package-path macos/Lattice Lattice --",
+    "open": "sh scripts/lattice-open.sh",
     "native:build": "swift build --package-path macos/Lattice",
     "native:test": "swift test --package-path macos/Lattice",
     "native:bundle": "sh macos/Lattice/scripts/build-app.sh",
