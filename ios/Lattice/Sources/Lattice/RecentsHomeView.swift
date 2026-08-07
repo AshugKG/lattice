@@ -81,23 +81,30 @@ private struct RecentCard: View {
   let recent: RecentDocument
   @State private var thumbnail: UIImage?
 
+  private var previewAspect: CGFloat {
+    guard let thumbnail, thumbnail.size.height > 0 else { return 3.0 / 4.0 }
+    return thumbnail.size.width / thumbnail.size.height
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      ZStack {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .fill(Color(.secondarySystemBackground))
+      Group {
         if let thumbnail {
           Image(uiImage: thumbnail)
             .resizable()
-            .scaledToFit()
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .scaledToFill()
         } else {
-          Image(systemName: "doc.richtext")
-            .font(.largeTitle)
-            .foregroundStyle(.secondary)
+          ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .fill(Color(.secondarySystemBackground))
+            Image(systemName: "doc.richtext")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+          }
         }
       }
-      .frame(height: 160)
+      .aspectRatio(previewAspect, contentMode: .fit)
+      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: 8, style: .continuous)
           .strokeBorder(Color(.separator), lineWidth: 0.5)
@@ -123,7 +130,11 @@ private struct RecentCard: View {
       guard let document = PDFDocument(url: url), let page = document.page(at: 0) else {
         return nil
       }
-      return page.thumbnail(of: CGSize(width: 240, height: 320), for: .cropBox)
+      let bounds = page.bounds(for: .cropBox)
+      guard bounds.height > 0 else { return nil }
+      let height: CGFloat = 320
+      let width = height * (bounds.width / bounds.height)
+      return page.thumbnail(of: CGSize(width: width, height: height), for: .cropBox)
     }.value
   }
 }
