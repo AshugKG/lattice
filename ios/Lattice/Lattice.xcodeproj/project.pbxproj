@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		1FCF264CE1D2EFF6DB021FA0 /* PortalOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */; };
+		3EFF71A3305E6D35014691FE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5E1B365FD7C087AA290E4DBF /* Assets.xcassets */; };
 		4046C402CA3AAC8E945F0C2E /* LatticeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 0F09D89945848E4F583A1183 /* LatticeCore */; };
 		460623D24598033F5DD53A3F /* DocumentImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216EB2F5DADF39A6EC490EC3 /* DocumentImporter.swift */; };
 		4A7920F978218E66586C8FEA /* PortalPhaseIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */; };
@@ -21,6 +22,7 @@
 
 /* Begin PBXFileReference section */
 		216EB2F5DADF39A6EC490EC3 /* DocumentImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentImporter.swift; sourceTree = "<group>"; };
+		5E1B365FD7C087AA290E4DBF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		63F05D03A4EEA0305747D4AE /* PDFController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFController.swift; sourceTree = "<group>"; };
 		8D95E4FB7D33338CDFCCF7E4 /* Lattice */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Lattice; path = ../../macos/Lattice; sourceTree = SOURCE_ROOT; };
 		9B576119A0192C0A5F70EBED /* PDFKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFKitView.swift; sourceTree = "<group>"; };
@@ -30,7 +32,7 @@
 		EB5086ACCD09286C3B1943B3 /* ReaderScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderScreen.swift; sourceTree = "<group>"; };
 		EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalPhaseIcon.swift; sourceTree = "<group>"; };
 		FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOverlayView.swift; sourceTree = "<group>"; };
-		FF3B53D4F9DD5D7C4B93487D /* Lattice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF3B53D4F9DD5D7C4B93487D /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				66C35027CA9C4775ED32E45A /* Packages */,
+				5B3E4C8D60E55F3AB46759C4 /* Resources */,
 				9471B4E37D4A6C61846F8B04 /* Sources */,
 				CCE89F12DC10AE075C3E4F67 /* Products */,
 			);
@@ -68,6 +71,14 @@
 				BC978489A03AEF16AB6F69A4 /* RecentsHomeView.swift */,
 			);
 			path = Lattice;
+			sourceTree = "<group>";
+		};
+		5B3E4C8D60E55F3AB46759C4 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				5E1B365FD7C087AA290E4DBF /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		66C35027CA9C4775ED32E45A /* Packages */ = {
@@ -102,6 +113,7 @@
 			buildConfigurationList = C880ACEC5FD16DEFE7B3405B /* Build configuration list for PBXNativeTarget "Lattice" */;
 			buildPhases = (
 				A8D96910FE38A9E143FFFF6F /* Sources */,
+				049EE633F1655597F3A4D075 /* Resources */,
 				14A2C5F5B2F00EFB910846F0 /* Frameworks */,
 			);
 			buildRules = (
@@ -126,6 +138,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					10F314C2EB47810D0E866617 = {
+						DevelopmentTeam = 775NVCV6Z6;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -151,6 +164,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		049EE633F1655597F3A4D075 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3EFF71A3305E6D35014691FE /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A8D96910FE38A9E143FFFF6F /* Sources */ = {

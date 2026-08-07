@@ -1,6 +1,9 @@
 import SwiftUI
 
 /// Linked-points portal icon: top circle blue while placing source; bottom circle red for destination.
+///
+/// Style B — the S-curve runs under the nodes; each circle is punched clean then filled/stroked
+/// so the link never shows through.
 struct PortalPhaseIcon: View {
   enum Phase {
     /// Idle / placing source — top circle filled blue.
@@ -14,39 +17,89 @@ struct PortalPhaseIcon: View {
 
   var body: some View {
     Canvas { context, canvasSize in
-      let w = canvasSize.width
-      let h = canvasSize.height
-      let top = CGPoint(x: w * 0.28, y: h * 0.28)
-      let bottom = CGPoint(x: w * 0.72, y: h * 0.72)
-      let radius = min(w, h) * 0.16
+      let mark = PortalMarkGeometry(size: canvasSize)
 
-      var curve = Path()
-      curve.move(to: CGPoint(x: top.x + radius * 0.4, y: top.y + radius * 0.4))
-      curve.addCurve(
-        to: CGPoint(x: bottom.x - radius * 0.4, y: bottom.y - radius * 0.4),
-        control1: CGPoint(x: w * 0.7, y: h * 0.2),
-        control2: CGPoint(x: w * 0.3, y: h * 0.8)
-      )
       context.stroke(
-        curve, with: .color(.primary.opacity(0.75)),
-        style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+        mark.linkPath,
+        with: .color(.primary.opacity(0.75)),
+        style: StrokeStyle(lineWidth: mark.linkWidth, lineCap: .round)
+      )
 
       let topFill: Color? = phase == .source ? .blue : nil
       let bottomFill: Color? = phase == .destination ? .red : nil
-      drawCircle(context: context, center: top, radius: radius, fill: topFill)
-      drawCircle(context: context, center: bottom, radius: radius, fill: bottomFill)
+      drawCircle(
+        context: &context, center: mark.top, radius: mark.radius, fill: topFill,
+        lineWidth: mark.circleWidth)
+      drawCircle(
+        context: &context, center: mark.bottom, radius: mark.radius, fill: bottomFill,
+        lineWidth: mark.circleWidth)
     }
     .frame(width: size, height: size)
     .accessibilityHidden(true)
   }
 
-  private func drawCircle(context: GraphicsContext, center: CGPoint, radius: CGFloat, fill: Color?) {
+  private func drawCircle(
+    context: inout GraphicsContext, center: CGPoint, radius: CGFloat, fill: Color?,
+    lineWidth: CGFloat
+  ) {
     let rect = CGRect(
       x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
     let path = Path(ellipseIn: rect)
+    // Punch out whatever the link drew inside this disk, then paint the node on top.
+    context.blendMode = .destinationOut
+    context.fill(path, with: .color(.black))
+    context.blendMode = .normal
     if let fill {
       context.fill(path, with: .color(fill))
     }
-    context.stroke(path, with: .color(.primary.opacity(0.85)), lineWidth: 1.4)
+    context.stroke(path, with: .color(.primary.opacity(0.85)), lineWidth: lineWidth)
+  }
+}
+
+/// Geometry for style B: link ends under the disks; circles drawn on top hide the join.
+struct PortalMarkGeometry {
+  let top: CGPoint
+  let bottom: CGPoint
+  let radius: CGFloat
+  let linkPath: Path
+  let linkWidth: CGFloat
+  let circleWidth: CGFloat
+
+  init(size: CGSize) {
+    let w = size.width
+    let h = size.height
+    let scale = min(w, h)
+    top = CGPoint(x: w * 0.30, y: h * 0.30)
+    bottom = CGPoint(x: w * 0.70, y: h * 0.70)
+    radius = scale * 0.155
+    linkWidth = max(1.2, scale * 0.065)
+    circleWidth = max(1.1, scale * 0.055)
+
+    let dx = bottom.x - top.x
+    let dy = bottom.y - top.y
+    let length = hypot(dx, dy)
+    let ux = dx / length
+    let uy = dy / length
+    let px = -uy
+    let py = ux
+
+    // Deep inside each disk so the punched circles fully own the join.
+    let attach = radius * 0.40
+    let start = CGPoint(x: top.x + ux * attach, y: top.y + uy * attach)
+    let end = CGPoint(x: bottom.x - ux * attach, y: bottom.y - uy * attach)
+    let bulge = length * 0.16
+    let c1 = CGPoint(
+      x: top.x + ux * length * 0.34 + px * bulge,
+      y: top.y + uy * length * 0.34 + py * bulge
+    )
+    let c2 = CGPoint(
+      x: top.x + ux * length * 0.66 - px * bulge,
+      y: top.y + uy * length * 0.66 - py * bulge
+    )
+
+    var path = Path()
+    path.move(to: start)
+    path.addCurve(to: end, control1: c1, control2: c2)
+    linkPath = path
   }
 }
