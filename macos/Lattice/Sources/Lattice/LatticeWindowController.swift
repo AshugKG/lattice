@@ -59,6 +59,7 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
       defer: false
     )
     window.title = "Lattice"
+    window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.minSize = NSSize(width: 720, height: 520)
     window.acceptsMouseMovedEvents = true
@@ -322,25 +323,37 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     searchField.widthAnchor.constraint(equalToConstant: 160).isActive = true
     filenameLabel.lineBreakMode = .byTruncatingMiddle
     filenameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+    filenameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     pageLabel.textColor = .secondaryLabelColor
     pageLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    pageLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     scaleLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     portalPhaseIndicator.translatesAutoresizingMaskIntoConstraints = false
     portalPhaseIndicator.setContentHuggingPriority(.required, for: .horizontal)
+    portalPhaseIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+    openButton.setContentHuggingPriority(.required, for: .horizontal)
+    openButton.setContentCompressionResistancePriority(.required, for: .horizontal)
     NSLayoutConstraint.activate([
       portalPhaseIndicator.widthAnchor.constraint(equalToConstant: 28),
       portalPhaseIndicator.heightAnchor.constraint(equalToConstant: 22),
     ])
 
+    // Filename above page count so the portal mark never collides with the title text.
+    let documentInfo = NSStackView(views: [filenameLabel, pageLabel])
+    documentInfo.orientation = .vertical
+    documentInfo.alignment = .leading
+    documentInfo.spacing = 1
+    documentInfo.setHuggingPriority(.defaultLow, for: .horizontal)
+
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     let stack = NSStackView(views: [
-      openButton, portalPhaseIndicator, filenameLabel, pageLabel, spacer, searchField, zoomOut,
-      scaleLabel, zoomIn, fit, help,
+      openButton, portalPhaseIndicator, documentInfo, spacer, searchField, zoomOut, scaleLabel,
+      zoomIn, fit, help,
     ])
     stack.orientation = .horizontal
     stack.alignment = .centerY
-    stack.spacing = 8
+    stack.spacing = 10
     stack.translatesAutoresizingMaskIntoConstraints = false
     toolbar.addSubview(stack)
     rootView.addSubview(toolbar)
@@ -351,15 +364,19 @@ final class LatticeWindowController: NSWindowController, NSSearchFieldDelegate, 
     rootView.addSubview(searchPrompt)
     rootView.addSubview(portalsView)
 
+    // fullSizeContentView draws under the traffic lights — clear that cluster (~70pt) + margin.
+    let trafficLightLeading: CGFloat = 78
     NSLayoutConstraint.activate([
       toolbar.topAnchor.constraint(equalTo: rootView.topAnchor),
       toolbar.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
       toolbar.heightAnchor.constraint(equalToConstant: 52),
-      stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 14),
+      stack.leadingAnchor.constraint(
+        equalTo: toolbar.leadingAnchor, constant: trafficLightLeading),
       stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -14),
       stack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-      filenameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+      documentInfo.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
+      documentInfo.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
       splitView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
       splitView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
       splitView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
