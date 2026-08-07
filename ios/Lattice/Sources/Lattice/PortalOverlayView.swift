@@ -27,12 +27,20 @@ struct PortalInteractionTarget {
 }
 
 /// Owns per-page overlay views so portal rects are transformed by PDFKit with each page.
-/// Drawing new portals happens on `PortalCaptureView` (full-bleed); these views only paint/hit-test.
+/// Drawing new portals happens on `PortalChromeView` (full-bleed); these views only paint.
 final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unchecked Sendable {
-  var portals: [Portal] = []
-  var documentFingerprint: String?
-  var captureMode: PortalCaptureMode = .inactive
-  var arrivalAnchorID: UUID?
+  var portals: [Portal] = [] {
+    didSet { if portals != oldValue { refreshAll() } }
+  }
+  var documentFingerprint: String? {
+    didSet { if documentFingerprint != oldValue { refreshAll() } }
+  }
+  var captureMode: PortalCaptureMode = .inactive {
+    didSet { if captureMode != oldValue { refreshAll() } }
+  }
+  var arrivalAnchorID: UUID? {
+    didSet { if arrivalAnchorID != oldValue { refreshAll() } }
+  }
 
   var onBoxCaptured: ((CapturedPortalBox) -> Void)?
   var onActivatePortal: ((PortalInteractionTarget) -> Void)?
@@ -40,6 +48,9 @@ final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unch
 
   weak var pdfView: PDFView?
   private var pageViews: [Int: PortalPageOverlayView] = [:]
+  /// PDFKit can keep overlays on-screen after we drop them from `pageViews`. Track every live
+  /// overlay weakly so `refreshAll` can still reach orphans.
+  private let liveOverlays = NSHashTable<PortalPageOverlayView>.weakObjects()
   private let lock = NSLock()
 
   func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> UIView? {
@@ -50,8 +61,24 @@ final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unch
     if pageIndex >= 0, let existing = pageViews[pageIndex] {
       existing.page = page
       existing.pageIndex = pageIndex
+      existing.controller = self
       existing.sync(from: self)
+      liveOverlays.add(existing)
       return existing
+    }
+
+    // Prefer a still-attached overlay for this page over creating a second one PDFKit won't show.
+    if pageIndex >= 0,
+      let orphan = liveOverlays.allObjects.first(where: {
+        $0.pageIndex == pageIndex || $0.page === page
+      })
+    {
+      orphan.page = page
+      orphan.pageIndex = pageIndex
+      orphan.controller = self
+      orphan.sync(from: self)
+      pageViews[pageIndex] = orphan
+      return orphan
     }
 
     let overlay = PortalPageOverlayView()
@@ -59,6 +86,7 @@ final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unch
     overlay.pageIndex = pageIndex
     overlay.controller = self
     overlay.sync(from: self)
+    liveOverlays.add(overlay)
     if pageIndex >= 0 {
       pageViews[pageIndex] = overlay
     }
@@ -68,27 +96,57 @@ final class PortalOverlayController: NSObject, PDFPageOverlayViewProvider, @unch
   func pdfView(
     _ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage
   ) {
-    _ = overlayView
-    _ = page
+    lock.lock()
+    defer { lock.unlock() }
+    guard let overlay = overlayView as? PortalPageOverlayView else { return }
+    let index = pdfView.document?.index(for: page) ?? overlay.pageIndex
+    if index >= 0, pageViews[index] === overlay {
+      pageViews.removeValue(forKey: index)
+    } else {
+      pageViews = pageViews.filter { $0.value !== overlay }
+    }
   }
 
   func refreshAll() {
     lock.lock()
-    let views = Array(pageViews.values)
+    // Re-index every overlay PDFKit still retains so create/load can paint without scrolling.
+    for overlay in liveOverlays.allObjects {
+      if let page = overlay.page, let document = pdfView?.document {
+        let index = document.index(for: page)
+        if index >= 0 {
+          overlay.pageIndex = index
+          pageViews[index] = overlay
+        }
+      } else if overlay.pageIndex >= 0 {
+        pageViews[overlay.pageIndex] = overlay
+      }
+    }
+    var seen = Set<ObjectIdentifier>()
+    var views: [PortalPageOverlayView] = []
+    for view in pageViews.values + liveOverlays.allObjects {
+      let id = ObjectIdentifier(view)
+      guard seen.insert(id).inserted else { continue }
+      views.append(view)
+    }
     lock.unlock()
+
     for view in views {
       view.sync(from: self)
       view.setNeedsDisplay()
     }
   }
 
+  /// Clear the page→overlay index, then rebuild it from overlays PDFKit is still holding.
   func resetPages() {
     lock.lock()
     pageViews.removeAll()
     lock.unlock()
+    refreshAll()
   }
 
-  func viewportDidChange() {}
+  func viewportDidChange() {
+    refreshAll()
+  }
 }
 
 /// Drawn on a PDFKit page overlay — scrolls and zooms with the page like ink on the PDF.
@@ -99,7 +157,6 @@ final class PortalPageOverlayView: UIView {
 
   private var portals: [Portal] = []
   private var documentFingerprint: String?
-  private var captureMode: PortalCaptureMode = .inactive
   private var arrivalAnchorID: UUID?
   private let deleteBadgeSize: CGFloat = 22
 
@@ -118,7 +175,6 @@ final class PortalPageOverlayView: UIView {
   func sync(from controller: PortalOverlayController) {
     portals = controller.portals
     documentFingerprint = controller.documentFingerprint
-    captureMode = controller.captureMode
     arrivalAnchorID = controller.arrivalAnchorID
   }
 
@@ -128,6 +184,11 @@ final class PortalPageOverlayView: UIView {
   }
 
   override func draw(_ rect: CGRect) {
+    // Always paint from the controller so a stale sync can't hide portals after create/load.
+    if let controller {
+      sync(from: controller)
+    }
+
     guard let context = UIGraphicsGetCurrentContext(),
       let documentFingerprint
     else { return }

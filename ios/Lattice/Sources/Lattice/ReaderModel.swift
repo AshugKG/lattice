@@ -95,6 +95,7 @@ final class ReaderModel {
     resumeAppliedForOpenID = nil
     portalOverlay.documentFingerprint = nil
     portalOverlay.portals = []
+    portalOverlay.resetPages()
     pdfController.pdfView?.document = nil
     pageLabel = ""
     statusMessage = nil
@@ -118,9 +119,11 @@ final class ReaderModel {
       pageCount: document.pageCount
     )
     descriptor = desc
-    portalOverlay.resetPages()
+    // Set live state first, then rebind any overlays PDFKit already attached. Clearing the
+    // index without rebinding used to orphan on-screen views so create/refresh painted nothing.
     portalOverlay.documentFingerprint = fingerprint
     portalOverlay.portals = portals
+    portalOverlay.resetPages()
     syncPortalOverlayCapture()
 
     let recent = RecentDocument(
