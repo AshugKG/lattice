@@ -43,6 +43,20 @@ public struct JumpLocation: Codable, Equatable, Sendable {
 
   public var isHome: Bool { documentFingerprint == Self.homeFingerprint }
 
+  /// Same location, repointed at the current container if the document moved with the app.
+  public func resolvingDocumentPath() -> JumpLocation {
+    let resolved = SandboxPath.resolved(documentPath)
+    guard resolved != documentPath else { return self }
+    return JumpLocation(
+      documentFingerprint: documentFingerprint,
+      documentPath: resolved,
+      pageIndex: pageIndex,
+      viewportCenter: viewportCenter,
+      scaleFactor: scaleFactor,
+      visibleRect: visibleRect
+    )
+  }
+
   public func isEquivalent(to other: JumpLocation) -> Bool {
     if isHome || other.isHome { return isHome && other.isHome }
     let centersMatch =

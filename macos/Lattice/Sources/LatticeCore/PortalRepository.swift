@@ -51,14 +51,14 @@ public final class PortalRepository {
         guard file.schemaVersion == PortalFile.currentSchemaVersion else {
           throw PortalRepositoryError.unsupportedSchema(file.schemaVersion)
         }
-        return file.portals
+        return file.portals.map { $0.resolvingDocumentPaths() }
       }
       // Very old portal-named payload.
       let legacy = try decoder.decode(LegacyPortalFile.self, from: data)
       guard legacy.schemaVersion == PortalFile.currentSchemaVersion else {
         throw PortalRepositoryError.unsupportedSchema(legacy.schemaVersion)
       }
-      return legacy.portals
+      return legacy.portals.map { $0.resolvingDocumentPaths() }
     } catch let error as PortalRepositoryError {
       throw error
     } catch {

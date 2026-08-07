@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct LatticeApp: App {
   @State private var model = ReaderModel()
+  @Environment(\.scenePhase) private var scenePhase
 
   var body: some Scene {
     WindowGroup {
@@ -12,6 +13,9 @@ struct LatticeApp: App {
         } else {
           RecentsHomeView(model: model)
         }
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase != .active { model.saveReadingPositionNow() }
       }
       .alert("Error", isPresented: Binding(
         get: { model.errorMessage != nil },

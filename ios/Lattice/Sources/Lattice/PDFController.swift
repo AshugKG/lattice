@@ -9,42 +9,77 @@ final class PDFController {
   private var restoreWorkItem: DispatchWorkItem?
 
   func visiblePage(in pdfView: PDFView) -> PDFPage? {
-    let visible = Self.visibleContentRect(in: pdfView)
-    let center = CGPoint(x: visible.midX, y: visible.midY)
+    let center = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.midY)
     return pdfView.page(for: center, nearest: true) ?? pdfView.currentPage
   }
 
-  func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
-    guard let pdfView, let document = pdfView.document,
-      let page = visiblePage(in: pdfView)
-    else { return nil }
+  /// The viewport's top-left, resolved against the page that actually contains it.
+  ///
+  /// Anchoring on the page under the *center* would let `PortalGeometry.normalized` clip the
+  /// anchor to a page boundary whenever the viewport straddles two pages, which in continuous
+  /// mode is most of the time — that clipping is what made resume land off the saved spot.
+  private func viewportAnchor(in pdfView: PDFView) -> (page: PDFPage, point: CGPoint)? {
+    let topLeft = CGPoint(x: pdfView.bounds.minX, y: pdfView.bounds.minY)
+    guard let page = pdfView.page(for: topLeft, nearest: true) ?? pdfView.currentPage else {
+      return nil
+    }
     let box = page.bounds(for: .cropBox)
-    guard box.width > 0, box.height > 0 else { return nil }
-
-    let visible = Self.visibleContentRect(in: pdfView)
-    let visibleInPage = pdfView.convert(visible, to: page)
-    let visibleRect = PortalGeometry.normalized(rect: visibleInPage, in: box)
-
-    let viewCenter = CGPoint(x: visible.midX, y: visible.midY)
-    let pagePoint = pdfView.convert(viewCenter, to: page)
-    return JumpLocation(
-      documentFingerprint: fingerprint,
-      documentPath: path,
-      pageIndex: document.index(for: page),
-      viewportCenter: NormalizedPoint(
-        x: min(1, max(0, (pagePoint.x - box.minX) / box.width)),
-        y: min(1, max(0, (pagePoint.y - box.minY) / box.height))
-      ),
-      scaleFactor: Double(pdfView.scaleFactor),
-      visibleRect: visibleRect
+    let inPage = pdfView.convert(topLeft, to: page)
+    // A top edge landing in the gap between pages converts just outside the crop box.
+    return (
+      page,
+      CGPoint(
+        x: min(max(inPage.x, box.minX), box.maxX),
+        y: min(max(inPage.y, box.minY), box.maxY)
+      )
     )
   }
 
-  /// Restore exact viewport by pinning the saved page rect via scroll offset + one correction.
-  func restore(_ location: JumpLocation) {
+  /// Capture the viewport, storing its top-left as the top-left of `visibleRect`.
+  func currentJumpLocation(fingerprint: String, path: String) -> JumpLocation? {
+    guard let pdfView, let document = pdfView.document,
+      let anchor = viewportAnchor(in: pdfView)
+    else { return nil }
+
+    let box = anchor.page.bounds(for: .cropBox)
+    guard box.width > 0, box.height > 0 else { return nil }
+
+    // Build the window downward from the anchor so clipping to the page trims the far
+    // edges and leaves the anchor corner — `(minX, maxY)` — exactly where it was.
+    let viewportInPage = pdfView.convert(pdfView.bounds, to: anchor.page).standardized
+    let window = CGRect(
+      x: anchor.point.x,
+      y: anchor.point.y - viewportInPage.height,
+      width: viewportInPage.width,
+      height: viewportInPage.height
+    )
+
+    return JumpLocation(
+      documentFingerprint: fingerprint,
+      documentPath: path,
+      pageIndex: document.index(for: anchor.page),
+      viewportCenter: NormalizedPoint(
+        x: min(1, max(0, (window.midX - box.minX) / box.width)),
+        y: min(1, max(0, (window.midY - box.minY) / box.height))
+      ),
+      scaleFactor: Double(pdfView.scaleFactor),
+      visibleRect: PortalGeometry.normalized(rect: window, in: box)
+    )
+  }
+
+  /// Restore the exact viewport by putting the saved anchor back at the view's top-left.
+  ///
+  /// PDFKit offers no exact-restore API on iOS: `go(to:on:)` only scrolls a rect far enough to
+  /// be visible, and `currentDestination` / `go(to:)` are not inverses in continuous mode (the
+  /// former reports the viewport's bottom edge, the latter realigns by a viewport height plus
+  /// the bottom inset). So drive the scroll view PDFKit manages.
+  func restore(_ location: JumpLocation, completion: (() -> Void)? = nil) {
     guard let pdfView, let document = pdfView.document,
       let page = document.page(at: location.pageIndex)
-    else { return }
+    else {
+      completion?()
+      return
+    }
 
     restoreWorkItem?.cancel()
 
@@ -52,33 +87,81 @@ final class PDFController {
       pdfView.maxScaleFactor,
       max(pdfView.minScaleFactor, CGFloat(location.scaleFactor))
     )
+    // Zoom first: a page point maps to a scroll offset that depends on scale.
     pdfView.autoScales = false
     pdfView.scaleFactor = scale
 
-    let box = page.bounds(for: .cropBox)
-    guard let pageRect = location.pageSpaceRect(in: box), !pageRect.isNull, !pageRect.isEmpty
-    else { return }
-
     let work = DispatchWorkItem { [weak pdfView] in
-      guard let pdfView else { return }
+      guard let pdfView else {
+        completion?()
+        return
+      }
       pdfView.autoScales = false
       pdfView.scaleFactor = scale
       pdfView.layoutIfNeeded()
-      pdfView.lattice_scrollView?.layoutIfNeeded()
-      Self.pinPageRect(pageRect, on: page, in: pdfView)
-
-      // Second pass after PDFKit finishes laying out pages at the new scale.
+      Self.scrollAnchorToTopLeft(of: location, page: page, in: pdfView)
+      // Aligning is idempotent, so repeating it once absorbs any page layout that PDFKit
+      // finishes after the first pass; a settled view moves by zero.
       DispatchQueue.main.async { [weak pdfView] in
-        guard let pdfView else { return }
-        pdfView.autoScales = false
-        pdfView.scaleFactor = scale
-        pdfView.layoutIfNeeded()
-        pdfView.lattice_scrollView?.layoutIfNeeded()
-        Self.pinPageRect(pageRect, on: page, in: pdfView)
+        if let pdfView {
+          pdfView.layoutIfNeeded()
+          Self.scrollAnchorToTopLeft(of: location, page: page, in: pdfView)
+        }
+        completion?()
       }
     }
     restoreWorkItem = work
     DispatchQueue.main.async(execute: work)
+  }
+
+  private static func scrollAnchorToTopLeft(
+    of location: JumpLocation, page: PDFPage, in pdfView: PDFView
+  ) {
+    guard let scrollView = pdfView.lattice_scrollView,
+      let anchor = anchorPoint(for: location, page: page, in: pdfView)
+    else { return }
+
+    let inView = pdfView.convert(anchor, from: page)
+    var offset = scrollView.contentOffset
+    offset.x += inView.x - pdfView.bounds.minX
+    offset.y += inView.y - pdfView.bounds.minY
+    scrollView.setContentOffset(Self.clamped(offset, in: scrollView), animated: false)
+  }
+
+  /// Page-space anchor that belongs at the view's top-left: the saved rect's top-left.
+  private static func anchorPoint(for location: JumpLocation, page: PDFPage, in pdfView: PDFView)
+    -> CGPoint?
+  {
+    let box = page.bounds(for: .cropBox)
+    guard box.width > 0, box.height > 0 else { return nil }
+
+    if let visibleRect = location.visibleRect,
+      let pageRect = PortalGeometry.pageRect(for: visibleRect, in: box),
+      !pageRect.isNull, !pageRect.isEmpty
+    {
+      // Page space is bottom-origin, so the top of the viewport is `maxY`.
+      return CGPoint(x: pageRect.minX, y: pageRect.maxY)
+    }
+
+    // Legacy entries stored only a viewport center; offset it back out to a top-left.
+    let center = CGPoint(
+      x: box.minX + box.width * location.viewportCenter.x,
+      y: box.minY + box.height * location.viewportCenter.y
+    )
+    let viewportInPage = pdfView.convert(pdfView.bounds, to: page).standardized
+    return CGPoint(
+      x: center.x - viewportInPage.width / 2,
+      y: center.y + viewportInPage.height / 2
+    )
+  }
+
+  private static func clamped(_ offset: CGPoint, in scrollView: UIScrollView) -> CGPoint {
+    let inset = scrollView.adjustedContentInset
+    let minX = -inset.left
+    let minY = -inset.top
+    let maxX = max(minX, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
+    let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
+    return CGPoint(x: min(max(offset.x, minX), maxX), y: min(max(offset.y, minY), maxY))
   }
 
   func goToPage(index: Int) {
@@ -113,10 +196,10 @@ final class PDFController {
 
   func searchOriginSelection(backward: Bool) -> PDFSelection? {
     guard let pdfView, let document = pdfView.document else { return nil }
-    let visible = Self.visibleContentRect(in: pdfView)
+    let bounds = pdfView.bounds
     let viewPoint = CGPoint(
-      x: visible.midX,
-      y: backward ? visible.maxY - 2 : visible.minY + 2
+      x: bounds.midX,
+      y: backward ? bounds.maxY - 2 : bounds.minY + 2
     )
     guard let page = pdfView.page(for: viewPoint, nearest: true) ?? pdfView.currentPage else {
       return nil
@@ -182,91 +265,6 @@ final class PDFController {
   func clearSelection() {
     pdfView?.setCurrentSelection(nil, animate: false)
     pdfView?.highlightedSelections = nil
-  }
-
-  // MARK: - Exact viewport pin
-
-  /// Visible page area in `pdfView` coordinates (bounds minus scroll adjusted insets).
-  static func visibleContentRect(in pdfView: PDFView) -> CGRect {
-    let bounds = pdfView.bounds
-    guard let scroll = pdfView.lattice_scrollView else { return bounds }
-    let inset = scroll.adjustedContentInset
-    let rect = bounds.inset(by: inset)
-    guard rect.width > 1, rect.height > 1 else { return bounds }
-    return rect
-  }
-
-  /// Pin the saved page-space rect so its visual top-left matches the visible content origin.
-  private static func pinPageRect(_ pageRect: CGRect, on page: PDFPage, in pdfView: PDFView) {
-    guard let scrollView = pdfView.lattice_scrollView else {
-      pdfView.go(to: pageRect, on: page)
-      return
-    }
-
-    let topLeft = visualTopLeft(of: pageRect, from: page, in: pdfView)
-    align(pagePoint: topLeft, on: page, toVisibleOriginIn: pdfView, scrollView: scrollView)
-
-    // Measure-and-correct: remaining error is desired point vs visible origin in view space.
-    let visible = visibleContentRect(in: pdfView)
-    let desiredInView = pdfView.convert(topLeft, from: page)
-    let origin = CGPoint(x: visible.minX, y: visible.minY)
-    let delta = CGPoint(x: desiredInView.x - origin.x, y: desiredInView.y - origin.y)
-    guard abs(delta.x) > 0.5 || abs(delta.y) > 0.5 else { return }
-
-    var offset = scrollView.contentOffset
-    offset.x += delta.x
-    offset.y += delta.y
-    scrollView.setContentOffset(clampedContentOffset(offset, in: scrollView), animated: false)
-  }
-
-  /// Page-space point that maps to the visual top-left of `pageRect` in the view.
-  private static func visualTopLeft(of pageRect: CGRect, from page: PDFPage, in pdfView: PDFView)
-    -> CGPoint
-  {
-    let corners = [
-      CGPoint(x: pageRect.minX, y: pageRect.minY),
-      CGPoint(x: pageRect.minX, y: pageRect.maxY),
-      CGPoint(x: pageRect.maxX, y: pageRect.minY),
-      CGPoint(x: pageRect.maxX, y: pageRect.maxY),
-    ]
-    return corners.min { a, b in
-      let av = pdfView.convert(a, from: page)
-      let bv = pdfView.convert(b, from: page)
-      if abs(av.y - bv.y) > 0.5 { return av.y < bv.y }
-      return av.x < bv.x
-    } ?? CGPoint(x: pageRect.midX, y: pageRect.maxY)
-  }
-
-  private static func align(
-    pagePoint: CGPoint,
-    on page: PDFPage,
-    toVisibleOriginIn pdfView: PDFView,
-    scrollView: UIScrollView
-  ) {
-    let pointInPDFView = pdfView.convert(pagePoint, from: page)
-    let pointInScroll = scrollView.convert(pointInPDFView, from: pdfView)
-    let visible = visibleContentRect(in: pdfView)
-    let originInScroll = scrollView.convert(CGPoint(x: visible.minX, y: visible.minY), from: pdfView)
-
-    var offset = scrollView.contentOffset
-    offset.x += pointInScroll.x - originInScroll.x
-    offset.y += pointInScroll.y - originInScroll.y
-    scrollView.setContentOffset(clampedContentOffset(offset, in: scrollView), animated: false)
-  }
-
-  private static func clampedContentOffset(_ offset: CGPoint, in scrollView: UIScrollView) -> CGPoint
-  {
-    let inset = scrollView.adjustedContentInset
-    let minX = -inset.left
-    let minY = -inset.top
-    let maxX = max(
-      minX, scrollView.contentSize.width - scrollView.bounds.width + inset.right)
-    let maxY = max(
-      minY, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
-    return CGPoint(
-      x: min(max(offset.x, minX), maxX),
-      y: min(max(offset.y, minY), maxY)
-    )
   }
 }
 

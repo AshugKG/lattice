@@ -29,6 +29,19 @@ public struct RecentDocument: Codable, Equatable, Sendable, Identifiable {
   public var exists: Bool {
     FileManager.default.fileExists(atPath: path)
   }
+
+  /// Same entry, repointed at the current container if the document moved with the app.
+  public func resolvingPath() -> RecentDocument {
+    let resolved = SandboxPath.resolved(path)
+    guard resolved != path else { return self }
+    return RecentDocument(
+      fingerprint: fingerprint,
+      path: resolved,
+      name: name,
+      pageCount: pageCount,
+      lastOpenedAt: lastOpenedAt
+    )
+  }
 }
 
 public struct RecentsFile: Codable, Equatable, Sendable {
@@ -70,7 +83,7 @@ public final class RecentsRepository {
       guard file.schemaVersion == RecentsFile.currentSchemaVersion else {
         throw RecentsRepositoryError.unsupportedSchema(file.schemaVersion)
       }
-      return file.recents.filter(\.exists)
+      return file.recents.map { $0.resolvingPath() }.filter(\.exists)
     } catch let error as RecentsRepositoryError {
       throw error
     } catch {
@@ -106,7 +119,7 @@ public final class RecentsRepository {
     positions.values
       .sorted { $0.updatedAt > $1.updatedAt }
       .compactMap { position -> RecentDocument? in
-        let path = position.location.documentPath
+        let path = SandboxPath.resolved(position.location.documentPath)
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         let url = URL(fileURLWithPath: path)
         return RecentDocument(

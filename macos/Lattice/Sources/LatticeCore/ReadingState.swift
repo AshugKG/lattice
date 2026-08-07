@@ -9,6 +9,11 @@ public struct ReadingPosition: Codable, Equatable, Sendable {
     let milliseconds = (updatedAt.timeIntervalSince1970 * 1_000).rounded(.down)
     self.updatedAt = Date(timeIntervalSince1970: milliseconds / 1_000)
   }
+
+  /// Same position, repointed at the current container if the document moved with the app.
+  public func resolvingDocumentPath() -> ReadingPosition {
+    ReadingPosition(location: location.resolvingDocumentPath(), updatedAt: updatedAt)
+  }
 }
 
 public struct ReadingStateFile: Codable, Equatable, Sendable {
@@ -48,7 +53,7 @@ public final class ReadingStateRepository {
       guard file.schemaVersion == ReadingStateFile.currentSchemaVersion else {
         throw ReadingStateRepositoryError.unsupportedSchema(file.schemaVersion)
       }
-      return file.positions
+      return file.positions.mapValues { $0.resolvingDocumentPath() }
     } catch let error as ReadingStateRepositoryError {
       throw error
     } catch {

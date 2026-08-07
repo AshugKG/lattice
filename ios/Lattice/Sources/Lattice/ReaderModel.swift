@@ -469,14 +469,19 @@ final class ReaderModel {
     suppressPersistUntil = Date().addingTimeInterval(1.0)
     let pageCount = descriptor?.pageCount ?? 0
     pageLabel = pageCount > 0 ? "\(location.pageIndex + 1) / \(pageCount)" : ""
-    pdfController.restore(location)
-    Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .milliseconds(250))
+    pdfController.restore(location) { [weak self] in
       guard let self else { return }
       self.isRestoringViewport = false
       self.updatePageLabel()
       self.portalOverlay.refreshAll()
     }
+  }
+
+  /// Persist without waiting out the debounce; leaving the foreground can end in termination.
+  func saveReadingPositionNow() {
+    guard isReading else { return }
+    persistTask?.cancel()
+    persistCurrentReadingPosition()
   }
 
   private func schedulePersistReadingPosition() {
@@ -504,10 +509,12 @@ final class ReaderModel {
       let document = pdfView.document,
       let page = pdfController.visiblePage(in: pdfView)
     else {
-      pageLabel = ""
+      if !pageLabel.isEmpty { pageLabel = "" }
       return
     }
     let index = document.index(for: page) + 1
-    pageLabel = "\(index) / \(document.pageCount)"
+    let label = "\(index) / \(document.pageCount)"
+    // Scrolling drives this per frame; assigning unconditionally would re-render the toolbar.
+    if pageLabel != label { pageLabel = label }
   }
 }

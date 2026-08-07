@@ -393,6 +393,60 @@ private func location(
   #expect(seeded[0].name == "seed.pdf")
 }
 
+@Test func sandboxPathRebasesPathsFromAnOldContainer() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let current = root.appendingPathComponent("Application/NEW-UUID/Documents")
+  try FileManager.default.createDirectory(
+    at: current.appendingPathComponent("PDFs"), withIntermediateDirectories: true)
+  let moved = current.appendingPathComponent("PDFs/book.pdf")
+  try Data("%PDF-1.4".utf8).write(to: moved)
+
+  let stale = root.appendingPathComponent("Application/OLD-UUID/Documents/PDFs/book.pdf").path
+  #expect(SandboxPath.resolved(stale, documentsDirectory: current) == moved.path)
+
+  // A file that is simply gone stays as-is rather than pointing somewhere plausible.
+  let missing = root.appendingPathComponent("Application/OLD-UUID/Documents/PDFs/gone.pdf").path
+  #expect(SandboxPath.resolved(missing, documentsDirectory: current) == missing)
+}
+
+@Test func sandboxPathLeavesResolvableAndUnrelatedPathsAlone() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let current = root.appendingPathComponent("Documents")
+  try FileManager.default.createDirectory(at: current, withIntermediateDirectories: true)
+  let present = current.appendingPathComponent("here.pdf")
+  try Data("%PDF-1.4".utf8).write(to: present)
+  // Same basename outside the container, so a wrong rebase would be observable.
+  let outside = root.appendingPathComponent("Elsewhere")
+  try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+  let sibling = outside.appendingPathComponent("here.pdf")
+  try Data("%PDF-1.4".utf8).write(to: sibling)
+
+  #expect(SandboxPath.resolved(sibling.path, documentsDirectory: current) == sibling.path)
+  #expect(SandboxPath.resolved(present.path, documentsDirectory: current) == present.path)
+  #expect(SandboxPath.resolved("", documentsDirectory: current) == "")
+}
+
+@Test func resolvingAnUnrecoverablePathPreservesEveryOtherField() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  let stale = root.appendingPathComponent("OLD/Documents/PDFs/absent.pdf").path
+
+  // Nothing exists at either end, so resolving must hand back the record untouched.
+  let recent = RecentDocument(fingerprint: "a", path: stale, name: "absent.pdf", pageCount: 9)
+  #expect(recent.resolvingPath() == recent)
+
+  let source = anchor(path: stale, page: 2)
+  #expect(source.resolvingDocumentPath() == source)
+
+  let portal = Portal(source: source, destination: anchor(path: stale, page: 7))
+  #expect(portal.resolvingDocumentPaths() == portal)
+
+  let position = ReadingPosition(location: location(page: 4))
+  #expect(position.resolvingDocumentPath() == position)
+  #expect(JumpLocation.home.resolvingDocumentPath() == JumpLocation.home)
+}
+
 @Test func launchArgumentsParseGotoFlags() {
   let parsed = LaunchArguments.parse([
     "Lattice",

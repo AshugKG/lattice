@@ -68,6 +68,12 @@ public struct PortalAnchor: Codable, Equatable, Identifiable, Sendable {
       quotedText: quotedText
     )
   }
+
+  /// Same anchor, repointed at the current container if the document moved with the app.
+  public func resolvingDocumentPath() -> PortalAnchor {
+    let resolved = SandboxPath.resolved(documentPath)
+    return resolved == documentPath ? self : replacingDocumentPath(resolved)
+  }
 }
 
 public struct Portal: Codable, Equatable, Identifiable, Sendable {
@@ -96,6 +102,16 @@ public struct Portal: Codable, Equatable, Identifiable, Sendable {
         ? source.replacingDocumentPath(path) : source,
       destination: destination.documentFingerprint == fingerprint
         ? destination.replacingDocumentPath(path) : destination,
+      createdAt: createdAt
+    )
+  }
+
+  /// Same portal, with both endpoints repointed at the current container when needed.
+  public func resolvingDocumentPaths() -> Portal {
+    Portal(
+      id: id,
+      source: source.resolvingDocumentPath(),
+      destination: destination.resolvingDocumentPath(),
       createdAt: createdAt
     )
   }

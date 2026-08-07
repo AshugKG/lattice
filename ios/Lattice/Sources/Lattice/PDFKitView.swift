@@ -34,6 +34,7 @@ struct PDFKitView: UIViewRepresentable {
 
     if let documentURL, let document = PDFDocument(url: documentURL) {
       pdfView.document = document
+      context.coordinator.observeScroll(in: pdfView)
       DispatchQueue.main.async {
         onDocumentReady(document)
       }
@@ -65,6 +66,8 @@ struct PDFKitView: UIViewRepresentable {
         pdfView.document = nil
       }
     }
+    // PDFKit builds its scroll view lazily with the first document.
+    context.coordinator.observeScroll(in: pdfView)
   }
 
   func makeCoordinator() -> Coordinator {
@@ -75,6 +78,8 @@ struct PDFKitView: UIViewRepresentable {
     var onViewportChanged: (() -> Void)?
     weak var host: PDFHostView?
     private var observers: [any NSObjectProtocol] = []
+    private var scrollObservation: ScrollOffsetObserver?
+    private weak var observedScrollView: UIScrollView?
     private var lastCaptureMode: PortalCaptureMode?
 
     deinit {
@@ -105,6 +110,19 @@ struct PDFKitView: UIViewRepresentable {
       }
     }
 
+    /// PDFKit posts no scroll notification, so scrolling inside the already-visible pages
+    /// never reaches `onViewportChanged`. Watch the scroll view PDFKit manages instead.
+    @MainActor
+    func observeScroll(in pdfView: PDFView) {
+      guard let scrollView = pdfView.lattice_scrollView, scrollView !== observedScrollView else {
+        return
+      }
+      observedScrollView = scrollView
+      scrollObservation = ScrollOffsetObserver(scrollView: scrollView) { [weak self] in
+        self?.onViewportChanged?()
+      }
+    }
+
     func applyCaptureMode(_ mode: PortalCaptureMode, host: PDFHostView) {
       let drawing = mode.allowsDrawing
       host.chromeView.captureMode = mode
@@ -116,6 +134,39 @@ struct PDFKitView: UIViewRepresentable {
         host.chromeView.controller?.refreshAll()
       }
     }
+  }
+}
+
+/// Reports scroll offset changes on the scroll view PDFKit owns. String-keyed KVO because
+/// Swift cannot form a key path to `contentOffset` from outside the main actor.
+final class ScrollOffsetObserver: NSObject {
+  private weak var scrollView: UIScrollView?
+  private let onChange: () -> Void
+  private var lastOffset: CGPoint?
+
+  init(scrollView: UIScrollView, onChange: @escaping () -> Void) {
+    self.scrollView = scrollView
+    self.onChange = onChange
+    super.init()
+    scrollView.addObserver(self, forKeyPath: "contentOffset", options: [.new], context: nil)
+  }
+
+  deinit {
+    scrollView?.removeObserver(self, forKeyPath: "contentOffset")
+  }
+
+  override func observeValue(
+    forKeyPath keyPath: String?,
+    of object: Any?,
+    change: [NSKeyValueChangeKey: Any]?,
+    context: UnsafeMutableRawPointer?
+  ) {
+    guard let offset = change?[.newKey] as? CGPoint else { return }
+    if let lastOffset, abs(lastOffset.x - offset.x) < 0.5, abs(lastOffset.y - offset.y) < 0.5 {
+      return
+    }
+    lastOffset = offset
+    onChange()
   }
 }
 
