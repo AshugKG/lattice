@@ -30,7 +30,7 @@
 		EB5086ACCD09286C3B1943B3 /* ReaderScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderScreen.swift; sourceTree = "<group>"; };
 		EC8B4DB4239285801C12E7E1 /* PortalPhaseIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalPhaseIcon.swift; sourceTree = "<group>"; };
 		FC81EDDC32B33CD34A078E81 /* PortalOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOverlayView.swift; sourceTree = "<group>"; };
-		FF3B53D4F9DD5D7C4B93487D /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF3B53D4F9DD5D7C4B93487D /* Lattice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -179,6 +179,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 775NVCV6Z6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Lattice;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
@@ -262,6 +263,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 775NVCV6Z6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Lattice;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
